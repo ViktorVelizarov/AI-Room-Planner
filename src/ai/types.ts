@@ -1,9 +1,10 @@
 import type { FurnitureItem } from "../shared/furniture";
+import type { PhotoType } from "../shared/photo";
 
 export type DetectionImage = {
   /** Base64-encoded image bytes. */
   data: string;
-  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  mimeType: PhotoType;
 };
 
 export type TokenUsage = { inputTokens: number; outputTokens: number };
