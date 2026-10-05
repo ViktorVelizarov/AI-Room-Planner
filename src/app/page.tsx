@@ -1,4 +1,4 @@
-import { RoomAnalyzer } from "@/components/room-analyzer";
+import { RoomPlanner } from "@/components/room-planner";
 
 export default function Home() {
   return (
@@ -12,7 +12,7 @@ export default function Home() {
           layouts in 3D.
         </p>
       </header>
-      <RoomAnalyzer />
+      <RoomPlanner />
     </main>
   );
 }

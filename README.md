@@ -32,12 +32,12 @@ Open <http://localhost:3000>. The upload page should load without errors.
 | Folder | Purpose |
 | --- | --- |
 | `src/app/` | Pages and API routes (Next.js App Router) |
-| `src/components/` | UI components: the photo uploader, the detection step and the furniture list |
+| `src/components/` | UI components: the three-step flow (photos, room size, summary), the photo uploader, the furniture list and the room size form |
 | `src/client/` | Browser-only helpers: shrinking photos before upload and calling the API |
 | `src/ai/` | AI code: furniture detection and layout generation. Server-side only |
 | `src/viewer/` | 3D rendering code: room scene, furniture models. Browser only |
 | `src/server/` | Server-only logic behind the API routes: the AI call limit and the request handlers |
-| `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels, photo rules and the API response types |
+| `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels, photo rules, room size limits and the API response types |
 | `scripts/` | Command-line tools, such as `detect.ts` |
 
 `src/ai/` and `src/viewer/` must not import from each other, so each can be run and tested on its own. Both may import from `src/shared/`.

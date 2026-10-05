@@ -16,8 +16,13 @@ type State =
 const keyOf = (files: File[]) =>
   files.map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
 
+type Props = {
+  /** Called with the detected furniture when a detection succeeds, and with null when one starts or fails. */
+  onResultChange?: (data: DetectResponse | null) => void;
+};
+
 /** The photo step and the detection step: add photos, find the furniture in them, see the list. */
-export function RoomAnalyzer() {
+export function RoomAnalyzer({ onResultChange }: Props) {
   const [files, setFiles] = useState<File[]>([]);
   const [state, setState] = useState<State>({ status: "idle" });
   const [calls, setCalls] = useState<Calls | null>(null);
@@ -26,10 +31,12 @@ export function RoomAnalyzer() {
 
   async function detect() {
     setState({ status: "loading" });
+    onResultChange?.(null);
     const outcome = await requestDetection(files);
     if (outcome.ok) {
       setCalls(outcome.data.calls);
       setState({ status: "done", data: outcome.data, photoKey: keyOf(files) });
+      onResultChange?.(outcome.data);
     } else {
       if (outcome.failure.calls) setCalls(outcome.failure.calls);
       setState({ status: "failed", failure: outcome.failure });
