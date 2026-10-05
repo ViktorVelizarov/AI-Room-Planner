@@ -24,14 +24,16 @@ Open <http://localhost:3000>. The upload page should load without errors.
 | `npm start` | Serve the production build |
 | `npm run lint` | Run ESLint |
 | `npm test` | Run the unit tests (no network or API key needed) |
-| `npm run detect -- <photos>` | Send room photos to the furniture detector and print the result. Needs `GEMINI_API_KEY`; each photo is one paid call |
+| `npm run detect -- <photos>` | Send room photos to the furniture detector and print the result, one call per photo. Needs `GEMINI_API_KEY`; every call is paid |
+| `npm run detect -- --room <photos>` | The same, but all photos are one room: a single call and one list, as the app does it |
 
 ## Project structure
 
 | Folder | Purpose |
 | --- | --- |
 | `src/app/` | Pages and API routes (Next.js App Router) |
-| `src/components/` | UI components, such as the photo uploader |
+| `src/components/` | UI components: the photo uploader, the detection step and the furniture list |
+| `src/client/` | Browser-only helpers: shrinking photos before upload and calling the API |
 | `src/ai/` | AI code: furniture detection and layout generation. Server-side only |
 | `src/viewer/` | 3D rendering code: room scene, furniture models. Browser only |
 | `src/server/` | Server-only logic behind the API routes: the AI call limit and the request handlers |
@@ -42,7 +44,7 @@ Open <http://localhost:3000>. The upload page should load without errors.
 
 ## Furniture detection
 
-`detectFurniture(image)` in `src/ai/` sends one photo to Gemini and returns the furniture it found: type (one of 15 supported labels), size in cm (width, depth, height), main colour and main material. It never returns positions; those come from the layout step later.
+`detectFurniture(images)` in `src/ai/` sends the photos of one room to Gemini in a single call and returns the furniture it found, with a piece that appears in several photos listed once: type (one of 15 supported labels), size in cm (width, depth, height), main colour and main material. It never returns positions; those come from the layout step later.
 
 - The answer is validated against a schema. If it is invalid or incomplete, the model is asked once more; if the second answer is also invalid, a `DetectionError` is thrown and no data is used.
 - Things the model labels `other` (not a supported type) are left out of the result.
@@ -64,7 +66,7 @@ The browser never talks to Gemini. Every AI call goes through a route on this se
 
 ### `POST /api/detect`
 
-Send one room photo as form data in a field named `photo` (JPG, PNG or WebP, up to 10 MB). The answer is the furniture found, plus how many AI calls the session has used:
+Send the photos of one room as form data, one `photo` field for each: 1 to 5 JPG, PNG or WebP photos, up to 10 MB each and 14 MB together. They are analysed in one AI call. The answer is the furniture found, plus how many AI calls the session has used. The page shrinks every photo to 1568 px before sending, which keeps a request far below the 20 MB Gemini accepts:
 
 ```json
 {
@@ -78,8 +80,8 @@ A failure has the form `{ "error": { "code", "message" }, "calls": { "used", "li
 
 | Status | `code` | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_photo` | No photo, an unsupported type, or an empty file |
-| 413 | `photo_too_large` | Over 10 MB |
+| 400 | `invalid_photo` | No photo, more than 5, an unsupported type, or an empty file |
+| 413 | `photo_too_large` | A photo over 10 MB, or more than 14 MB in total |
 | 429 | `limit_reached` | The session has used all its AI calls. Nothing was sent to Gemini |
 | 500 | `server_misconfigured` | No API key on the server |
 | 502 | `invalid_answer` | Gemini's answer was invalid twice in a row |
@@ -89,7 +91,7 @@ A failure has the form `{ "error": { "code", "message" }, "calls": { "used", "li
 
 Each browser session may make 10 AI calls (change it with `AI_CALL_LIMIT`).
 
-- Every call to Gemini counts, including a retry: a detection whose first answer was invalid uses 2. A call is counted before it is sent, so one that fails still counts.
+- Every call to Gemini counts, including a retry: a detection whose first answer was invalid uses 2. All the photos of a room go in one call, so five photos cost the same as one. A call is counted before it is sent, so one that fails still counts.
 - When the limit is reached the server answers `429` and sends nothing to Gemini. If the limit runs out between a detection's first call and its retry, the retry is not sent.
 - The count lives in an HttpOnly cookie (`ai_calls`) that ends with the browser session. It protects against accidents, such as a bug that loops or heavy use by one person. It does not stop someone who deletes the cookie, and requests sent in parallel can overshoot by a call or two.
 

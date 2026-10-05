@@ -11,8 +11,15 @@ function formatSize(bytes: number) {
   return bytes < MB ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / MB).toFixed(1)} MB`;
 }
 
+type Props = {
+  /** Called with the photos that are in the list, every time the list changes. */
+  onPhotosChange?: (files: File[]) => void;
+  /** Locks the list, for example while the photos are being analysed. */
+  disabled?: boolean;
+};
+
 /** Lets the user pick up to 5 photos of their room, see them as thumbnails and remove any of them. */
-export function PhotoUploader() {
+export function PhotoUploader({ onPhotosChange, disabled = false }: Props) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
   const nextId = useRef(0);
@@ -35,21 +42,25 @@ export function PhotoUploader() {
     if (chosen.length === 0) return;
 
     const { accepted, notices } = addPhotos(photos.length, chosen);
-    setNotices(notices);
-    setPhotos([
+    const next = [
       ...photos,
       ...accepted.map((file) => ({
         id: nextId.current++,
         file,
         previewUrl: URL.createObjectURL(file),
       })),
-    ]);
+    ];
+    setNotices(notices);
+    setPhotos(next);
+    onPhotosChange?.(next.map((photo) => photo.file));
   }
 
   function handleRemove(photo: Photo) {
     URL.revokeObjectURL(photo.previewUrl);
-    setPhotos(photos.filter((other) => other.id !== photo.id));
+    const next = photos.filter((other) => other.id !== photo.id);
+    setPhotos(next);
     setNotices([]);
+    onPhotosChange?.(next.map((other) => other.file));
   }
 
   return (
@@ -70,7 +81,8 @@ export function PhotoUploader() {
         <button
           type="button"
           onClick={() => fileInput.current?.click()}
-          className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          disabled={disabled}
+          className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Add photos
         </button>
@@ -121,8 +133,9 @@ export function PhotoUploader() {
                     <button
                       type="button"
                       onClick={() => handleRemove(photo)}
+                      disabled={disabled}
                       aria-label={`Remove ${photo.file.name}`}
-                      className="shrink-0 rounded-full border border-black/15 px-3 py-1 text-xs font-medium hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+                      className="shrink-0 rounded-full border border-black/15 px-3 py-1 text-xs font-medium hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/20 dark:hover:bg-white/10"
                     >
                       Remove
                     </button>

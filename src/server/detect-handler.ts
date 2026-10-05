@@ -7,7 +7,7 @@ import {
   type GenerateFn,
 } from "../ai";
 import type { ApiErrorCode, ApiFailure, DetectResponse } from "../shared/api";
-import { MAX_PHOTO_BYTES, checkPhoto } from "../shared/photo";
+import { MAX_TOTAL_PHOTO_BYTES, checkPhotoSet } from "../shared/photo";
 import {
   CallLimitError,
   callsCookie,
@@ -16,7 +16,7 @@ import {
   readCalls,
 } from "./call-limit";
 
-// Room for the multipart envelope around a photo that is exactly at the size limit.
+// Room for the multipart envelope around photos that add up to exactly the size limit.
 const FORM_OVERHEAD_BYTES = 1024 * 1024;
 
 const limitMessage = (limit: number) =>
@@ -29,7 +29,7 @@ type Options = {
 };
 
 /**
- * Builds the POST handler for /api/detect: one photo in, the detected furniture out. Every
+ * Builds the POST handler for /api/detect: the photos of one room in, the detected furniture out. Every
  * model call is counted against the session's limit, and a request that is over the limit
  * is answered before anything is sent to the AI provider. Error messages are written for
  * the user; details (provider errors, keys) stay in the server log.
@@ -59,32 +59,35 @@ export function createDetectHandler({
     }
 
     const declaredBytes = Number(request.headers.get("content-length"));
-    if (declaredBytes > MAX_PHOTO_BYTES + FORM_OVERHEAD_BYTES) {
-      return fail("photo_too_large", "That photo is too large.", 413);
+    if (declaredBytes > MAX_TOTAL_PHOTO_BYTES + FORM_OVERHEAD_BYTES) {
+      return fail("photo_too_large", "The photos are too large.", 413);
     }
 
-    let photo: FormDataEntryValue | null;
+    let entries: FormDataEntryValue[];
     try {
-      photo = (await request.formData()).get("photo");
+      entries = (await request.formData()).getAll("photo");
     } catch {
-      photo = null;
+      entries = [];
     }
-    if (photo === null || typeof photo === "string") {
-      return fail("invalid_photo", "Send one photo to analyse.", 400);
+    const photos = entries.filter((entry) => typeof entry !== "string");
+    if (photos.length < entries.length) {
+      return fail("invalid_photo", "Send the photos as files.", 400);
     }
 
-    const check = checkPhoto(photo);
+    const check = checkPhotoSet(photos);
     if (!check.ok) {
       return fail(check.code, check.message, check.code === "photo_too_large" ? 413 : 400);
     }
 
-    const data = Buffer.from(await photo.arrayBuffer()).toString("base64");
+    const images = await Promise.all(
+      photos.map(async (photo, i) => ({
+        data: Buffer.from(await photo.arrayBuffer()).toString("base64"),
+        mimeType: check.types[i],
+      })),
+    );
 
     try {
-      const result = await detectFurniture(
-        { data, mimeType: check.type },
-        limitCalls(generate, calls),
-      );
+      const result = await detectFurniture(images, limitCalls(generate, calls));
       return respond(
         { items: result.items, unsupported: result.unsupported, calls: { ...calls } },
         200,

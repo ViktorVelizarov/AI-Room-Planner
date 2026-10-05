@@ -17,8 +17,8 @@ export type ModelAnswer = {
   note?: string;
 };
 
-/** One call to the model. Injected into `detectFurniture` so tests need no network. */
-export type GenerateFn = (image: DetectionImage) => Promise<ModelAnswer>;
+/** One call to the model, with every photo of the room. Injected into `detectFurniture` so tests need no network. */
+export type GenerateFn = (images: DetectionImage[]) => Promise<ModelAnswer>;
 
 export type DetectionResult = {
   /** The furniture found, supported types only. */

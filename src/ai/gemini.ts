@@ -1,7 +1,7 @@
 import { FinishReason, GoogleGenAI } from "@google/genai";
-import { DETECTION_PROMPT } from "./prompt";
+import { buildDetectionPrompt } from "./prompt";
 import { detectionJsonSchema } from "./schema";
-import type { GenerateFn } from "./types";
+import type { DetectionImage, GenerateFn } from "./types";
 
 const DEFAULT_MODEL = "gemini-3.1-pro-preview";
 // The slowest of the 120 benchmark calls took 30 s.
@@ -16,11 +16,21 @@ export class MissingApiKeyError extends Error {
   }
 }
 
+/** What goes into the request: every photo, then the instructions. */
+export function requestParts(images: DetectionImage[]) {
+  return [
+    ...images.map((image) => ({
+      inlineData: { data: image.data, mimeType: image.mimeType },
+    })),
+    { text: buildDetectionPrompt(images.length) },
+  ];
+}
+
 /**
- * Sends one photo to Gemini and returns its raw answer. The SDK is left without its own
+ * Sends the photos of one room to Gemini and returns its raw answer. The SDK is left without its own
  * HTTP retries, so one call here is exactly one paid request.
  */
-export const generateWithGemini: GenerateFn = async (image) => {
+export const generateWithGemini: GenerateFn = async (images) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new MissingApiKeyError();
 
@@ -30,15 +40,7 @@ export const generateWithGemini: GenerateFn = async (image) => {
   });
   const response = await ai.models.generateContent({
     model: process.env.GEMINI_MODEL || DEFAULT_MODEL,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { inlineData: { data: image.data, mimeType: image.mimeType } },
-          { text: DETECTION_PROMPT },
-        ],
-      },
-    ],
+    contents: [{ role: "user", parts: requestParts(images) }],
     config: {
       responseMimeType: "application/json",
       responseJsonSchema: detectionJsonSchema(),

@@ -7,6 +7,12 @@ export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 /** Photos of one room that can be added at once. */
 export const MAX_PHOTOS = 5;
 
+/**
+ * The most photo data one request may carry. Gemini accepts 20 MB per request with images
+ * sent inline, and base64 makes them a third bigger, so this stays well under that.
+ */
+export const MAX_TOTAL_PHOTO_BYTES = 14 * 1024 * 1024;
+
 export type PhotoCheck =
   | { ok: true; type: PhotoType }
   | { ok: false; code: "invalid_photo" | "photo_too_large"; message: string };
@@ -63,4 +69,39 @@ export function addPhotos<T extends { name: string; type: string; size: number }
     notices.push(`${noRoom.length} photos were not added. You can add up to ${MAX_PHOTOS} photos.`);
   }
   return { accepted, notices };
+}
+
+export type PhotoSetCheck =
+  | { ok: true; types: PhotoType[] }
+  | { ok: false; code: "invalid_photo" | "photo_too_large"; message: string };
+
+/** Checks the photos of one request together: how many there are, each one, and their total size. */
+export function checkPhotoSet(photos: { type: string; size: number }[]): PhotoSetCheck {
+  if (photos.length === 0) {
+    return { ok: false, code: "invalid_photo", message: "Send at least one photo to analyse." };
+  }
+  if (photos.length > MAX_PHOTOS) {
+    return {
+      ok: false,
+      code: "invalid_photo",
+      message: `You can send up to ${MAX_PHOTOS} photos at once.`,
+    };
+  }
+
+  const types: PhotoType[] = [];
+  for (const photo of photos) {
+    const check = checkPhoto(photo);
+    if (!check.ok) return check;
+    types.push(check.type);
+  }
+
+  const total = photos.reduce((sum, photo) => sum + photo.size, 0);
+  if (total > MAX_TOTAL_PHOTO_BYTES) {
+    return {
+      ok: false,
+      code: "photo_too_large",
+      message: `Together the photos are larger than ${MAX_TOTAL_PHOTO_BYTES / 1024 / 1024} MB.`,
+    };
+  }
+  return { ok: true, types };
 }

@@ -65,19 +65,22 @@ export function parseDetection(
 }
 
 /**
- * Finds the furniture in one photo. If the model's answer is invalid or incomplete it asks
+ * Finds the furniture in the photos of one room, all sent in a single model call so that a piece
+ * seen in several photos can be listed once. If the model's answer is invalid or incomplete it asks
  * once more; if the second answer is also invalid it throws a DetectionError rather than
  * returning broken data. Errors from the call itself (network, bad key) are not retried.
  */
 export async function detectFurniture(
-  image: DetectionImage,
+  images: DetectionImage[],
   generate: GenerateFn = generateWithGemini,
 ): Promise<DetectionResult> {
+  if (images.length === 0) throw new RangeError("detectFurniture needs at least one photo");
+
   const reasons: string[] = [];
   const usage = { inputTokens: 0, outputTokens: 0 };
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const answer = await generate(image);
+    const answer = await generate(images);
     usage.inputTokens += answer.usage?.inputTokens ?? 0;
     usage.outputTokens += answer.usage?.outputTokens ?? 0;
 

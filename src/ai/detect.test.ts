@@ -83,10 +83,10 @@ describe("detectFurniture", () => {
   it("calls the model once when the first answer is valid", async () => {
     const generate = vi.fn<GenerateFn>().mockResolvedValue(answerWith({ items: [sofa] }));
 
-    const result = await detectFurniture(image, generate);
+    const result = await detectFurniture([image], generate);
 
     expect(generate).toHaveBeenCalledTimes(1);
-    expect(generate).toHaveBeenCalledWith(image);
+    expect(generate).toHaveBeenCalledWith([image]);
     expect(result).toEqual({
       items: [sofa],
       unsupported: 0,
@@ -95,13 +95,31 @@ describe("detectFurniture", () => {
     });
   });
 
+  it("sends all the photos of a room together in one call", async () => {
+    const generate = vi.fn<GenerateFn>().mockResolvedValue(answerWith({ items: [sofa] }));
+    const second: DetectionImage = { data: "BBBB", mimeType: "image/png" };
+
+    const result = await detectFurniture([image, second], generate);
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledWith([image, second]);
+    expect(result.attempts).toBe(1);
+  });
+
+  it("needs at least one photo", async () => {
+    const generate = vi.fn<GenerateFn>();
+
+    await expect(detectFurniture([], generate)).rejects.toThrow(RangeError);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it("retries once when the first answer is invalid and uses the second", async () => {
     const generate = vi
       .fn<GenerateFn>()
       .mockResolvedValueOnce({ text: '{"items":[{"label":"sofa"' })
       .mockResolvedValueOnce(answerWith({ items: [sofa] }));
 
-    const result = await detectFurniture(image, generate);
+    const result = await detectFurniture([image], generate);
 
     expect(generate).toHaveBeenCalledTimes(2);
     expect(result.items).toEqual([sofa]);
@@ -114,7 +132,7 @@ describe("detectFurniture", () => {
       .mockResolvedValueOnce({ text: "nope", usage: { inputTokens: 50, outputTokens: 5 } })
       .mockResolvedValueOnce(answerWith({ items: [] }));
 
-    const result = await detectFurniture(image, generate);
+    const result = await detectFurniture([image], generate);
 
     expect(result.usage).toEqual({ inputTokens: 150, outputTokens: 25 });
   });
@@ -125,7 +143,7 @@ describe("detectFurniture", () => {
       .mockResolvedValueOnce(answerWith({ items: [{ ...sofa, width_cm: 0 }] }))
       .mockResolvedValueOnce({ text: "I cannot help with that" });
 
-    const error = await detectFurniture(image, generate).catch((e: unknown) => e);
+    const error = await detectFurniture([image], generate).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(DetectionError);
     const detection = error as DetectionError;
@@ -139,7 +157,7 @@ describe("detectFurniture", () => {
   it("does not retry when the call itself fails", async () => {
     const generate = vi.fn<GenerateFn>().mockRejectedValue(new Error("fetch failed"));
 
-    await expect(detectFurniture(image, generate)).rejects.toThrow("fetch failed");
+    await expect(detectFurniture([image], generate)).rejects.toThrow("fetch failed");
     expect(generate).toHaveBeenCalledTimes(1);
   });
 });
@@ -150,6 +168,6 @@ describe("generateWithGemini", () => {
   it("reports a missing API key before sending anything", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
 
-    await expect(generateWithGemini(image)).rejects.toBeInstanceOf(MissingApiKeyError);
+    await expect(generateWithGemini([image])).rejects.toBeInstanceOf(MissingApiKeyError);
   });
 });

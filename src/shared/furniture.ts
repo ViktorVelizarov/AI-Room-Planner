@@ -46,5 +46,25 @@ export const furnitureItemSchema = z.object({
 });
 
 export type FurnitureLabel = (typeof FURNITURE_LABELS)[number];
+
+/** How each type is written for the user. */
+export const FURNITURE_NAMES: Record<FurnitureLabel, string> = {
+  sofa: "Sofa",
+  armchair: "Armchair",
+  coffee_table: "Coffee table",
+  side_table: "Side table",
+  dining_table: "Dining table",
+  dining_chair: "Dining chair",
+  bed: "Bed",
+  nightstand: "Nightstand",
+  dresser: "Dresser",
+  bookshelf: "Bookshelf",
+  tv_stand: "TV stand",
+  desk: "Desk",
+  office_chair: "Office chair",
+  floor_lamp: "Floor lamp",
+  rug: "Rug",
+};
+
 export type Material = (typeof MATERIALS)[number];
 export type FurnitureItem = z.infer<typeof furnitureItemSchema>;

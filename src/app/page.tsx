@@ -1,4 +1,4 @@
-import { PhotoUploader } from "@/components/photo-uploader";
+import { RoomAnalyzer } from "@/components/room-analyzer";
 
 export default function Home() {
   return (
@@ -12,7 +12,7 @@ export default function Home() {
           layouts in 3D.
         </p>
       </header>
-      <PhotoUploader />
+      <RoomAnalyzer />
     </main>
   );
 }

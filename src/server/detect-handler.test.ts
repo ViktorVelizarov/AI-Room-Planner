@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MissingApiKeyError } from "../ai";
 import type { GenerateFn, ModelAnswer } from "../ai";
 import type { ApiFailure, DetectResponse } from "../shared/api";
-import { MAX_PHOTO_BYTES } from "../shared/photo";
+import { MAX_PHOTOS, MAX_PHOTO_BYTES, MAX_TOTAL_PHOTO_BYTES } from "../shared/photo";
 import { createDetectHandler } from "./detect-handler";
 
 const sofa = {
@@ -21,11 +21,14 @@ const photoBytes = new Uint8Array([1, 2, 3, 4, 5]);
 const jpeg = (bytes: Uint8Array<ArrayBuffer> = photoBytes) =>
   new File([bytes], "room.jpg", { type: "image/jpeg" });
 
-function requestWith(photo?: File | string, headers: Record<string, string> = {}) {
+function requestWithPhotos(photos: (File | string)[], headers: Record<string, string> = {}) {
   const form = new FormData();
-  if (photo !== undefined) form.set("photo", photo);
+  for (const photo of photos) form.append("photo", photo);
   return new Request("http://localhost/api/detect", { method: "POST", body: form, headers });
 }
+
+const requestWith = (photo?: File | string, headers: Record<string, string> = {}) =>
+  requestWithPhotos(photo === undefined ? [] : [photo], headers);
 
 const failure = async (res: Response) => (await res.json()) as ApiFailure;
 
@@ -56,10 +59,24 @@ describe("POST /api/detect", () => {
       } satisfies DetectResponse);
       expect(res.headers.get("set-cookie")).toContain("ai_calls=1;");
       expect(generate).toHaveBeenCalledTimes(1);
-      expect(generate).toHaveBeenCalledWith({
-        data: Buffer.from(photoBytes).toString("base64"),
-        mimeType: "image/jpeg",
-      });
+      expect(generate).toHaveBeenCalledWith([
+        { data: Buffer.from(photoBytes).toString("base64"), mimeType: "image/jpeg" },
+      ]);
+    });
+
+    it("sends several photos of a room together, in order, as one counted call", async () => {
+      const { generate, POST } = setup(goodAnswer);
+      const png = new File([new Uint8Array([9, 9])], "b.png", { type: "image/png" });
+
+      const res = await POST(requestWithPhotos([jpeg(), png]));
+
+      expect(res.status).toBe(200);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(generate).toHaveBeenCalledWith([
+        { data: Buffer.from(photoBytes).toString("base64"), mimeType: "image/jpeg" },
+        { data: Buffer.from([9, 9]).toString("base64"), mimeType: "image/png" },
+      ]);
+      expect((await res.json()).calls.used).toBe(1);
     });
 
     it("adds to the count the browser already has", async () => {
@@ -178,6 +195,42 @@ describe("POST /api/detect", () => {
         code: "invalid_photo",
         message: "Only JPG, PNG and WebP photos are supported.",
       });
+      expect(generate).not.toHaveBeenCalled();
+    });
+
+    it(`rejects more than ${MAX_PHOTOS} photos`, async () => {
+      const { generate, POST } = setup(goodAnswer);
+
+      const res = await POST(requestWithPhotos(Array.from({ length: MAX_PHOTOS + 1 }, () => jpeg())));
+
+      expect(res.status).toBe(400);
+      expect((await failure(res)).error).toEqual({
+        code: "invalid_photo",
+        message: "You can send up to 5 photos at once.",
+      });
+      expect(generate).not.toHaveBeenCalled();
+    });
+
+    it("rejects the whole request when one of the photos is not usable", async () => {
+      const { generate, POST } = setup(goodAnswer);
+      const gif = new File([photoBytes], "a.gif", { type: "image/gif" });
+
+      const res = await POST(requestWithPhotos([jpeg(), gif]));
+
+      expect(res.status).toBe(400);
+      expect(generate).not.toHaveBeenCalled();
+      expect(res.headers.get("set-cookie")).toBeNull();
+    });
+
+    it("rejects photos that are too large together, even if each is within its limit", async () => {
+      const { generate, POST } = setup(goodAnswer);
+      const eightMb = () => jpeg(new Uint8Array(8 * 1024 * 1024));
+      expect(2 * 8 * 1024 * 1024).toBeGreaterThan(MAX_TOTAL_PHOTO_BYTES);
+
+      const res = await POST(requestWithPhotos([eightMb(), eightMb()]));
+
+      expect(res.status).toBe(413);
+      expect((await failure(res)).error.code).toBe("photo_too_large");
       expect(generate).not.toHaveBeenCalled();
     });
 
