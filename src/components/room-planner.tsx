@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DetectResponse } from "../shared/api";
+import { toEntries, type FurnitureEntry } from "../shared/furniture-list";
 import type { RoomSize } from "../shared/room";
 import { RoomAnalyzer } from "./room-analyzer";
 import { RoomSizeForm } from "./room-size-form";
@@ -53,13 +54,21 @@ export function RoomPlanner() {
   const [step, setStep] = useState(PHOTOS);
   const [detected, setDetected] = useState<DetectResponse | null>(null);
   const [roomSize, setRoomSize] = useState<RoomSize | null>(null);
+  // The furniture the user is working on: what the AI found, plus their corrections.
+  const [entries, setEntries] = useState<FurnitureEntry[]>([]);
+
+  function handleResult(data: DetectResponse | null) {
+    setDetected(data);
+    // A new detection starts the list again; while one runs or fails, the corrections stay.
+    if (data) setEntries(toEntries(data.items));
+  }
 
   return (
     <div className="flex flex-col gap-8">
       <StepIndicator current={step} />
 
       <Step active={step === PHOTOS} label="Photos">
-        <RoomAnalyzer onResultChange={setDetected} />
+        <RoomAnalyzer onResultChange={handleResult} />
         {detected && (
           <div className="flex justify-end">
             <button
@@ -100,8 +109,9 @@ export function RoomPlanner() {
         {detected && roomSize && (
           <RoomSummary
             size={roomSize}
-            items={detected.items}
+            entries={entries}
             unsupported={detected.unsupported}
+            onEntriesChange={setEntries}
             onBack={() => setStep(ROOM_SIZE)}
           />
         )}

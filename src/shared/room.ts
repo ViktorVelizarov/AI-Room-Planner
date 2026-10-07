@@ -1,3 +1,5 @@
+import { readDecimal, type NumberCheck } from "./numbers";
+
 /** The size of the room in metres. */
 export type RoomSize = { width_m: number; length_m: number; height_m: number };
 
@@ -19,9 +21,7 @@ const NAMES: Record<RoomDimension, string> = {
   height: "Height",
 };
 
-export type DimensionCheck =
-  | { ok: true; value: number }
-  | { ok: false; message: string };
+export type DimensionCheck = NumberCheck;
 
 /**
  * Reads what the user typed for one dimension. Accepts a decimal point or a decimal comma
@@ -35,11 +35,10 @@ export function parseDimension(dimension: RoomDimension, text: string): Dimensio
   if (typed === "") {
     return { ok: false, message: `Enter the ${name.toLowerCase()} in metres.` };
   }
-  if (!/^(\d+([.,]\d*)?|[.,]\d+)$/.test(typed)) {
+  const value = readDecimal(typed);
+  if (value === null) {
     return { ok: false, message: `${name} must be a number, for example 4.5.` };
   }
-
-  const value = Number(typed.replace(",", "."));
   if (value < min || value > max) {
     return { ok: false, message: `${name} must be between ${min} and ${max} m.` };
   }

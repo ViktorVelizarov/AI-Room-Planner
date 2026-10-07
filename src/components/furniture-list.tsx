@@ -2,6 +2,18 @@ import { FURNITURE_NAMES, type FurnitureItem } from "../shared/furniture";
 
 const cm = (n: number) => Math.round(n);
 
+/** Says how many things the AI found that are not a supported type and so were left out. */
+export function UnsupportedNote({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      {count === 1
+        ? "1 other item is not a supported furniture type and was left out."
+        : `${count} other items are not supported furniture types and were left out.`}
+    </p>
+  );
+}
+
 /** The furniture the AI found: what each piece is, its estimated size, and its colour and material. */
 export function FurnitureList({
   items,
@@ -42,13 +54,7 @@ export function FurnitureList({
         </>
       )}
 
-      {unsupported > 0 && (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          {unsupported === 1
-            ? "1 other item is not a supported furniture type and was left out."
-            : `${unsupported} other items are not supported furniture types and were left out.`}
-        </p>
-      )}
+      <UnsupportedNote count={unsupported} />
     </div>
   );
 }

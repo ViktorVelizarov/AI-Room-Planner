@@ -1,17 +1,19 @@
-import type { FurnitureItem } from "../shared/furniture";
+import type { FurnitureEntry } from "../shared/furniture-list";
 import { formatMetres, type RoomSize } from "../shared/room";
-import { FurnitureList } from "./furniture-list";
+import { FurnitureEditor } from "./furniture-editor";
 
-/** The room as it stands: its size and the furniture found in the photos. */
+/** The room as it stands: its size, and its furniture, which the user can correct. */
 export function RoomSummary({
   size,
-  items,
+  entries,
   unsupported,
+  onEntriesChange,
   onBack,
 }: {
   size: RoomSize;
-  items: FurnitureItem[];
+  entries: FurnitureEntry[];
   unsupported: number;
+  onEntriesChange: (entries: FurnitureEntry[]) => void;
   onBack: () => void;
 }) {
   return (
@@ -31,10 +33,10 @@ export function RoomSummary({
         </dd>
       </dl>
 
-      <FurnitureList items={items} unsupported={unsupported} />
+      <FurnitureEditor entries={entries} unsupported={unsupported} onChange={onEntriesChange} />
 
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        Next: correct the furniture list and see your room in 3D. Not built yet.
+        Next: see your room in 3D. Not built yet.
       </p>
 
       <div>

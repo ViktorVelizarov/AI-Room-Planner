@@ -133,8 +133,8 @@ describe("RoomPlanner", () => {
     expect(currentStep()).toContain("Your room");
     const summary = within(step("Your room")!);
     expect(summary.getByText("6 × 4.5 m, 2.5 m high")).toBeTruthy();
-    expect(summary.getByText("Detected furniture (1)")).toBeTruthy();
-    expect(summary.getByText("Sofa")).toBeTruthy();
+    expect(summary.getByText("Furniture in your room (1)")).toBeTruthy();
+    expect(summary.getByRole("button", { name: /^Edit Sofa/ })).toBeTruthy(); // the sofa's own row
   });
 
   it("does not move on while a value is wrong", async () => {
@@ -182,5 +182,67 @@ describe("RoomPlanner", () => {
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("not available"));
     expect(screen.queryByRole("button", { name: "Continue to room size" })).toBeNull();
+  });
+});
+
+describe("RoomPlanner: correcting the furniture", () => {
+  const setupToSummary = async () => {
+    const view = setup();
+    await view.detectFurniture();
+    await view.user.click(screen.getByRole("button", { name: "Continue to room size" }));
+    await view.user.click(screen.getByRole("button", { name: "Continue" }));
+    return view;
+  };
+  const summary = (step: (name: string) => HTMLElement | null) => within(step("Your room")!);
+
+  it("starts the list from what the AI found", async () => {
+    detect.mockResolvedValue(success);
+    const { step } = await setupToSummary();
+
+    expect(summary(step).getByText("Furniture in your room (1)")).toBeTruthy();
+    expect(summary(step).getByRole("button", { name: /^Edit Sofa \(200 × 90 × 85 cm\)/ })).toBeTruthy();
+  });
+
+  it("keeps the corrections when the user goes back to the room size and returns", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+    await user.click(summary(step).getByRole("button", { name: /^Remove Sofa/ }));
+    await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "bed");
+    await user.click(screen.getByRole("button", { name: "Add furniture" }));
+
+    await user.click(screen.getByRole("button", { name: "Back to room size" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(summary(step).getByText("Furniture in your room (1)")).toBeTruthy();
+    expect(summary(step).getByRole("button", { name: /^Edit Bed/ })).toBeTruthy();
+    expect(summary(step).queryByRole("button", { name: /^Edit Sofa/ })).toBeNull();
+    expect(detect).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the AI's own list in the photos step as it was", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+    await user.click(summary(step).getByRole("button", { name: /^Remove Sofa/ }));
+
+    await user.click(screen.getByRole("button", { name: "Back to room size" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(within(step("Photos")!).getByText("Detected furniture (1)")).toBeTruthy();
+  });
+
+  it("starts the list again when the furniture is detected again", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+    await user.click(summary(step).getByRole("button", { name: /^Remove Sofa/ }));
+    expect(summary(step).getByText("Furniture in your room (0)")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Back to room size" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await user.click(screen.getByRole("button", { name: "Detect furniture" }));
+    await user.click(await screen.findByRole("button", { name: "Continue to room size" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(summary(step).getByText("Furniture in your room (1)")).toBeTruthy();
+    expect(detect).toHaveBeenCalledTimes(2);
   });
 });
