@@ -4,7 +4,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DetectResponse } from "../shared/api";
 import { toEntries, type FurnitureEntry } from "../shared/furniture-list";
 import type { RoomSize } from "../shared/room";
+import type { RoomDescription } from "../shared/room-description";
 import { RoomAnalyzer } from "./room-analyzer";
+import { RoomDescriptionView } from "./room-description-view";
 import { RoomSizeForm } from "./room-size-form";
 import { RoomSummary } from "./room-summary";
 import { StepIndicator } from "./step-indicator";
@@ -48,14 +50,18 @@ function Step({
 const PHOTOS = 0;
 const ROOM_SIZE = 1;
 const SUMMARY = 2;
+const ROOM_3D = 3;
 
-/** The whole flow: photos and furniture, then the room size, then the room as it stands. */
+/** The whole flow: photos and furniture, then the room size, then the room as it stands, then the 3D room. */
 export function RoomPlanner() {
   const [step, setStep] = useState(PHOTOS);
   const [detected, setDetected] = useState<DetectResponse | null>(null);
   const [roomSize, setRoomSize] = useState<RoomSize | null>(null);
   // The furniture the user is working on: what the AI found, plus their corrections.
   const [entries, setEntries] = useState<FurnitureEntry[]>([]);
+  // The size and the furniture as confirmed in the last step, which the 3D room is made from.
+  // Made again each time the user continues, so the 3D room step always shows the latest.
+  const [description, setDescription] = useState<RoomDescription | null>(null);
 
   function handleResult(data: DetectResponse | null) {
     setDetected(data);
@@ -113,7 +119,41 @@ export function RoomPlanner() {
             unsupported={detected.unsupported}
             onEntriesChange={setEntries}
             onBack={() => setStep(ROOM_SIZE)}
+            onConfirm={(confirmed) => {
+              setDescription(confirmed);
+              setStep(ROOM_3D);
+            }}
           />
+        )}
+      </Step>
+
+      <Step active={step === ROOM_3D} label="3D room">
+        {description && (
+          <section
+            aria-labelledby="room-3d-heading"
+            className="flex flex-col gap-5 rounded-2xl border border-black/10 p-6 dark:border-white/15"
+          >
+            <div>
+              <h2 id="room-3d-heading" className="text-lg font-semibold">
+                3D room
+              </h2>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                The 3D room is not built yet. Here is the room description it will be built from.
+              </p>
+            </div>
+
+            <RoomDescriptionView description={description} />
+
+            <div>
+              <button
+                type="button"
+                onClick={() => setStep(SUMMARY)}
+                className="rounded-full border border-black/15 px-5 py-2.5 text-sm font-medium hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-white/20 dark:hover:bg-white/10"
+              >
+                Back to your room
+              </button>
+            </div>
+          </section>
         )}
       </Step>
     </div>

@@ -32,12 +32,12 @@ Open <http://localhost:3000>. The upload page should load without errors.
 | Folder | Purpose |
 | --- | --- |
 | `src/app/` | Pages and API routes (Next.js App Router) |
-| `src/components/` | UI components: the three-step flow (photos, room size, summary), the photo uploader, the room size form and the furniture editor |
+| `src/components/` | UI components: the four-step flow (photos, room size, your room, 3D room), the photo uploader, the room size form, the furniture editor and the room description view |
 | `src/client/` | Browser-only helpers: shrinking photos before upload and calling the API |
 | `src/ai/` | AI code: furniture detection and layout generation. Server-side only |
 | `src/viewer/` | 3D rendering code: room scene, furniture models. Browser only |
 | `src/server/` | Server-only logic behind the API routes: the AI call limit and the request handlers |
-| `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels and their typical sizes, photo rules, room size limits and the API response types |
+| `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels and their typical sizes, photo rules, room size limits, the room description and the API response types |
 | `scripts/` | Command-line tools, such as `detect.ts` |
 
 `src/ai/` and `src/viewer/` must not import from each other, so each can be run and tested on its own. Both may import from `src/shared/`.
@@ -49,6 +49,27 @@ Open <http://localhost:3000>. The upload page should load without errors.
 - The answer is validated against a schema. If it is invalid or incomplete, the model is asked once more; if the second answer is also invalid, a `DetectionError` is thrown and no data is used.
 - Things the model labels `other` (not a supported type) are left out of the result.
 - Errors from the call itself (no network, bad key) are not retried.
+
+## Room description
+
+The room description is the one piece of data the rest of the app builds on: the room size and the furniture list, together. The 3D room reads it, and so will the layout generator. It is made when the user presses **Continue to 3D room** on the "Your room" step, from the size and the furniture list as the user confirmed them.
+
+```json
+{
+  "room": { "width_m": 4, "length_m": 5, "height_m": 2.5 },
+  "furniture": [
+    { "label": "sofa", "width_cm": 200, "depth_cm": 90, "height_cm": 85, "color": "dark grey", "material": "fabric" },
+    { "label": "rug", "width_cm": 160, "depth_cm": 230, "height_cm": 1, "color": "beige", "material": "fabric" }
+  ]
+}
+```
+
+- The room is in metres, with the same limits as the size form: width and length 1 to 20, height 2 to 5. A piece is in cm, 0.1 to 1000. `label` is one of the 15 supported types, `material` one of the 7 materials, and `color` any text that is not empty.
+- There must be at least one piece of furniture.
+- There are no positions. A piece is identified by its place in `furniture`, which does not change once the description is made, so a layout can refer to "piece 3". Two identical chairs are two entries.
+- `createRoomDescription(room, furniture)` and `parseRoomDescription(input)` in `src/shared/room-description.ts` are the way to get a `RoomDescription`. Both return `{ ok: true, description }` or `{ ok: false, problems }`, and never throw. `problems` are plain sentences that say what is missing or wrong, such as `Furniture item 2 (Sofa): the depth is missing.` or `The furniture list is empty. Add at least one piece of furniture.`; every problem is listed, not only the first.
+- `parseRoomDescription` takes anything, such as JSON that was saved or sent in a request, so the server can check a description it receives instead of trusting the browser. It returns a clean copy with only the fields above. The schema itself is `roomDescriptionSchema`.
+- Until the 3D room is built, its step shows the description as JSON (`RoomDescriptionView`), which is the debug view.
 
 ## Environment variables
 

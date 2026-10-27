@@ -1,4 +1,4 @@
-export const STEP_NAMES = ["Photos", "Room size", "Your room"] as const;
+export const STEP_NAMES = ["Photos", "Room size", "Your room", "3D room"] as const;
 
 /** Shows which of the steps the user is on. `current` is the 0-based index. */
 export function StepIndicator({ current }: { current: number }) {

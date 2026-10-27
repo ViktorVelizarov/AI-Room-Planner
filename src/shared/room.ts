@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { readDecimal, type NumberCheck } from "./numbers";
 
 /** The size of the room in metres. */
@@ -11,6 +12,16 @@ export const ROOM_LIMITS: Record<RoomDimension, { min: number; max: number }> = 
   length: { min: 1, max: 20 },
   height: { min: 2, max: 5 },
 };
+
+const dimensionSchema = (dimension: RoomDimension) =>
+  z.number().min(ROOM_LIMITS[dimension].min).max(ROOM_LIMITS[dimension].max);
+
+/** A room size that follows the same limits as the size form, for sizes that did not come from it. */
+export const roomSizeSchema = z.object({
+  width_m: dimensionSchema("width"),
+  length_m: dimensionSchema("length"),
+  height_m: dimensionSchema("height"),
+});
 
 /** What the size fields start with: a typical living room. */
 export const DEFAULT_ROOM_SIZE: RoomSize = { width_m: 4, length_m: 5, height_m: 2.5 };
