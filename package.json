@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "detect": "tsx scripts/detect.ts"
+    "detect": "tsx scripts/detect.ts",
+    "models": "tsx scripts/build-model-library.ts"
   },
   "dependencies": {
     "@google/genai": "^2.27.0",

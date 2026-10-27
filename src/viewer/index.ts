@@ -2,3 +2,4 @@
 // Runs in the browser. Must not import anything from ../ai.
 export { createRoomViewer, type RoomViewer } from "./room-viewer";
 export type { CameraMove, CameraView } from "./camera-view";
+export { MODEL_FOLDER, furnitureLibrary, loadFurnitureModel, modelFor, modelUrl, parseFurnitureModel } from "./furniture-library";

@@ -35,10 +35,11 @@ Open <http://localhost:3000>. The upload page should load without errors.
 | `src/components/` | UI components: the four-step flow (photos, room size, your room, 3D room), the photo uploader, the room size form, the furniture editor, the room description view and the 3D room view |
 | `src/client/` | Browser-only helpers: shrinking photos before upload and calling the API |
 | `src/ai/` | AI code: furniture detection and layout generation. Server-side only |
-| `src/viewer/` | 3D rendering code: the empty 3D room, the camera and its controls, and later the furniture models. Browser only |
+| `src/viewer/` | 3D rendering code: the empty 3D room, the camera and its controls, and the loading of the furniture models. Browser only |
 | `src/server/` | Server-only logic behind the API routes: the AI call limit and the request handlers |
-| `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels and their typical sizes, photo rules, room size limits, the room description and the API response types |
-| `scripts/` | Command-line tools, such as `detect.ts` |
+| `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels and their typical sizes, photo rules, room size limits, the room description, the furniture library index and the API response types |
+| `public/` | Files the site serves as they are: the furniture model library, in `public/models/` |
+| `scripts/` | Command-line tools: `detect.ts` and `build-model-library.ts` |
 | `docs/` | Notes that are not code: the furniture model licence research (US-13) |
 
 `src/ai/` and `src/viewer/` must not import from each other, so each can be run and tested on its own. Both may import from `src/shared/`.
@@ -53,7 +54,16 @@ Open <http://localhost:3000>. The upload page should load without errors.
 
 ## Furniture models
 
-The 3D scene will use free models, chosen and checked in US-13: all 15 furniture types come from Kenney's Furniture Kit, which is CC0, so no credit is required (the credits section will name it anyway). `docs/furniture-model-licences.md` lists the libraries that were checked, why this one was chosen, which model stands for each type, and what the models need before use: they are about half real size and their origin is off-centre. The model files themselves are added in US-14.
+The 3D scene uses free models, chosen and checked in US-13: all 15 furniture types come from Kenney's Furniture Kit, which is CC0, so no credit is required (the credits section will name it anyway). `docs/furniture-model-licences.md` lists the libraries that were checked, why this one was chosen, and which model stands for each type.
+
+The library itself is the folder `public/models/`: one GLB file for each of the 15 types (3 to 39 KB each, about 0.2 MB in all), the index `index.json`, and the licence text of the kit.
+
+- **Index.** `index.json` lists every model with its type, file name, licence and credit, where it comes from and what was done to it, its size, and its materials with the main one (the surface that a colour is applied to). Its schema is `modelLibrarySchema` in `src/shared/model-library.ts`: an index that is invalid, or has no model for one of the types, is refused.
+- **Conventions.** Sizes in the index are in cm, and the files and the scene are in metres. Every model stands on the floor (its base is at y = 0), has the middle of its footprint at x = 0, z = 0, and faces +z, the front of the room (the axes of the 3D room, above). A model is a realistic size, close to the typical size of its type: the sofa is 198 cm wide. To show a piece at another size, scale the model along each axis by the size wanted divided by the size in the index.
+- **Loading.** `loadFurnitureModel(type)` in `src/viewer/` fetches `/models/<type>.glb` and returns a new 3D object, ready to be put in the scene. `parseFurnitureModel(entry, bytes)` makes one from the bytes of a file, and `modelFor(type)` gives the entry of the index. Each call makes a new object, so one type can be several pieces.
+- **Making the library.** `npm run models -- <the unpacked kit>` (`scripts/build-model-library.ts`) takes one model from Kenney's kit for each type, scales it so that it comes as close as possible to the typical size of its type, puts its base on the floor and the middle of its footprint at the origin, writes the credit into the file, and writes the index and the licence text. To use another model for a type, change the table at the top of the script and run it again. The kit itself is not in the repository: download it from [kenney.nl](https://kenney.nl/assets/furniture-kit).
+- **Two weaker matches.** The dresser is a stand-in: the kit has no chest of drawers, so it is a low wooden cabinet with doors. The side table is a long, narrow table rather than a square one. Both say so in the index.
+- **Tests.** The files and the index are tested as they are (`furniture-library.test.ts`): a model for every type, each file a GLB under 2 MB, only licences the project may use, the index matching the files, and each model loaded into a scene at the size the index gives, on the floor, centred, and facing +z. The tests that look at which way a model faces use the backrest of a seat and the handles of a drawer as the cue.
 
 ## Room description
 

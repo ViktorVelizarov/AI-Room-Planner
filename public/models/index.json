@@ -1,0 +1,339 @@
+{
+  "about": "The furniture models of the 3D room: at least one for each type the app supports. Made from the packs named under source by scripts/build-model-library.ts, which is also how to change them.",
+  "conventions": {
+    "units": "Sizes here are in cm. The files themselves are in metres, as glTF requires.",
+    "size": "width_cm (along x), depth_cm (along z) and height_cm (along y) are the size of the model as its file loads it. To show a piece at another size, scale the model along each axis by the size wanted divided by the size given here.",
+    "origin": "The middle of the model's footprint is at x = 0, z = 0 and its base is at y = 0, so a model stands on the floor wherever it is put.",
+    "facing": "Every model faces +z, the front of the room, when it is not turned."
+  },
+  "models": [
+    {
+      "type": "sofa",
+      "file": "sofa.glb",
+      "width_cm": 198,
+      "depth_cm": 82.8,
+      "height_cm": 92.9,
+      "main_material": "carpet",
+      "materials": [
+        "carpet",
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "loungeSofa",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 2.02, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "armchair",
+      "file": "armchair.glb",
+      "width_cm": 92.1,
+      "depth_cm": 77.1,
+      "height_cm": 86.5,
+      "main_material": "carpet",
+      "materials": [
+        "carpet",
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "loungeChair",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.88, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "coffee_table",
+      "file": "coffee_table.glb",
+      "width_cm": 108.4,
+      "depth_cm": 65.6,
+      "height_cm": 37.7,
+      "main_material": "wood",
+      "materials": [
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "tableCoffee",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.64, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "side_table",
+      "file": "side_table.glb",
+      "width_cm": 70,
+      "depth_cm": 28.8,
+      "height_cm": 50.4,
+      "main_material": "wood",
+      "materials": [
+        "wood",
+        "_defaultMat"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "sideTable",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.31, and moved so that its base is on the floor and the middle of its footprint is at the origin. A long, narrow table rather than a square one."
+    },
+    {
+      "type": "dining_table",
+      "file": "dining_table.glb",
+      "width_cm": 173.3,
+      "depth_cm": 92.2,
+      "height_cm": 67.3,
+      "main_material": "wood",
+      "materials": [
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "table",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 2.06, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "dining_chair",
+      "file": "dining_chair.glb",
+      "width_cm": 44.2,
+      "depth_cm": 44.2,
+      "height_cm": 103.9,
+      "main_material": "wood",
+      "materials": [
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "chair",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 2.21, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "bed",
+      "file": "bed.glb",
+      "width_cm": 175.9,
+      "depth_cm": 207,
+      "height_cm": 69,
+      "main_material": "carpet",
+      "materials": [
+        "carpetWhite",
+        "wood",
+        "metal",
+        "carpet"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "bedDouble",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.84, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "nightstand",
+      "file": "nightstand.glb",
+      "width_cm": 46.3,
+      "depth_cm": 37.8,
+      "height_cm": 45.8,
+      "main_material": "wood",
+      "materials": [
+        "wood",
+        "_defaultMat",
+        "metal"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "cabinetBedDrawer",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.74, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "dresser",
+      "file": "dresser.glb",
+      "width_cm": 141.6,
+      "depth_cm": 46,
+      "height_cm": 54.9,
+      "main_material": "wood",
+      "materials": [
+        "wood",
+        "metal"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "cabinetTelevisionDoors",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.77, and moved so that its base is on the floor and the middle of its footprint is at the origin. Stands in for a chest of drawers, which the kit does not have: a low wooden cabinet with doors."
+    },
+    {
+      "type": "bookshelf",
+      "file": "bookshelf.glb",
+      "width_cm": 68,
+      "depth_cm": 42.5,
+      "height_cm": 149.6,
+      "main_material": "wood",
+      "materials": [
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "bookcaseOpen",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.7, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "tv_stand",
+      "file": "tv_stand.glb",
+      "width_cm": 125.6,
+      "depth_cm": 39.3,
+      "height_cm": 48.7,
+      "main_material": "wood",
+      "materials": [
+        "wood"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "cabinetTelevision",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.57, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "desk",
+      "file": "desk.glb",
+      "width_cm": 124.9,
+      "depth_cm": 66.7,
+      "height_cm": 65.3,
+      "main_material": "wood",
+      "materials": [
+        "wood",
+        "metal"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "desk",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.7, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "office_chair",
+      "file": "office_chair.glb",
+      "width_cm": 59.6,
+      "depth_cm": 55.9,
+      "height_cm": 108.2,
+      "main_material": "carpet",
+      "materials": [
+        "metalMedium",
+        "carpet"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "chairDesk",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.78, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "floor_lamp",
+      "file": "floor_lamp.glb",
+      "width_cm": 31,
+      "depth_cm": 35.8,
+      "height_cm": 175.4,
+      "main_material": "lamp",
+      "materials": [
+        "metal",
+        "lamp"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "lampRoundFloor",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 2.04, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    },
+    {
+      "type": "rug",
+      "file": "rug.glb",
+      "width_cm": 215.1,
+      "depth_cm": 126,
+      "height_cm": 1.4,
+      "main_material": "carpet",
+      "materials": [
+        "carpet",
+        "carpetDarker"
+      ],
+      "licence": "CC0 1.0",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "credit": "Furniture Kit by Kenney (www.kenney.nl)",
+      "credit_required": false,
+      "source": {
+        "name": "rugRectangle",
+        "pack": "Furniture Kit 2.0",
+        "url": "https://kenney.nl/assets/furniture-kit"
+      },
+      "changes": "Scaled by 1.37, and moved so that its base is on the floor and the middle of its footprint is at the origin."
+    }
+  ]
+}

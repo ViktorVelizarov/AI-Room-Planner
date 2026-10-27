@@ -87,11 +87,11 @@ If the dresser stand-in looks wrong in the room, the upgrade is KayKit's `cabine
 
 Found while choosing, so it does not have to be found twice:
 
-- **Scale (US-14).** The Kenney models are about half real size: the sofa is 98 cm wide in the file, the bed 96 × 113 cm. Multiplying by about 2 gives believable sizes (a 196 cm sofa, a 192 × 226 cm bed). US-14 AC2 asks for real-world size, so each model's scale goes in the library index.
-- **Origin (US-14).** A model's origin is at a corner or off to one side of its footprint, not at its middle (the sofa's middle is 49 cm to the side and 21 cm back from the origin). Models need re-centring before they are placed. All 15 chosen models stand on the floor already (their base is at height 0). The pack's `tableRound` does not (its base is 27 cm below the origin), which is one reason it was not chosen.
-- **Colour (US-17).** The models use flat colours, no textures, with one to four named materials each: `wood`, `carpet` (upholstery and fabric), `metal`, `glass`, and variants such as `carpetWhite` and `metalMedium`. US-14's index should record which material is the main surface for each type.
-- **Which way a model faces** was not checked here. US-14 has to fix it and record it, because the rotation rule in US-20 depends on it.
-- **Licence file (US-14).** Keep the pack's `License.txt` next to the model files.
+- **Scale (US-14).** The Kenney models are about half real size: the sofa is 98 cm wide in the file, the bed 96 × 113 cm. Multiplying by about 2 gives believable sizes (a 196 cm sofa, a 192 × 226 cm bed). US-14 AC2 asks for real-world size, so each model's scale goes in the library index. *Done in US-14:* each file is scaled so that it comes as close as possible to the typical size of its type (the factors are between 1.3 and 2.2, not a flat 2), and the index says by how much.
+- **Origin (US-14).** A model's origin is at a corner or off to one side of its footprint, not at its middle (the sofa's middle is 49 cm to the side and 21 cm back from the origin). Models need re-centring before they are placed. All 15 chosen models stand on the floor already (their base is at height 0). The pack's `tableRound` does not (its base is 27 cm below the origin), which is one reason it was not chosen. *Done in US-14:* every file has its base on the floor and the middle of its footprint at the origin.
+- **Colour (US-17).** The models use flat colours, no textures, with one to four named materials each: `wood`, `carpet` (upholstery and fabric), `metal`, `glass`, and variants such as `carpetWhite` and `metalMedium`. US-14's index should record which material is the main surface for each type. *Done in US-14:* the index gives `main_material` and lists all the materials of each model.
+- **Which way a model faces** was not checked here. US-14 has to fix it and record it, because the rotation rule in US-20 depends on it. *Done in US-14:* all 15 models were looked at from the front and from behind, and every one already faces +z, the front of the room. The tests keep it so for the types that have a clear front (seats and beds have their backs at -z, and drawers and desks have their handles at +z).
+- **Licence file (US-14).** Keep the pack's `License.txt` next to the model files. *Done in US-14:* it is `public/models/LICENSE-kenney-furniture-kit.txt`.
 
 ## Credits
 
