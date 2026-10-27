@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DetectResponse } from "../shared/api";
 import { toEntries, type FurnitureEntry } from "../shared/furniture-list";
@@ -10,6 +11,19 @@ import { RoomDescriptionView } from "./room-description-view";
 import { RoomSizeForm } from "./room-size-form";
 import { RoomSummary } from "./room-summary";
 import { StepIndicator } from "./step-indicator";
+
+// The 3D code is large, so it is loaded when the user first reaches the 3D room, not with the page.
+const Room3DView = dynamic(() => import("./room-3d-view").then((module) => module.Room3DView), {
+  ssr: false,
+  loading: () => (
+    <p
+      role="status"
+      className="flex h-80 items-center justify-center rounded-lg bg-black/4 text-sm text-zinc-600 sm:h-112 dark:bg-white/6 dark:text-zinc-400"
+    >
+      Loading the 3D view…
+    </p>
+  ),
+});
 
 /**
  * One step of the flow. Steps that are not current are hidden, not removed, so the photos,
@@ -128,7 +142,8 @@ export function RoomPlanner() {
       </Step>
 
       <Step active={step === ROOM_3D} label="3D room">
-        {description && (
+        {/* Only while this step is open, so the 3D view is made when it is needed and freed when the user leaves. */}
+        {description && step === ROOM_3D && (
           <section
             aria-labelledby="room-3d-heading"
             className="flex flex-col gap-5 rounded-2xl border border-black/10 p-6 dark:border-white/15"
@@ -138,11 +153,12 @@ export function RoomPlanner() {
                 3D room
               </h2>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                The 3D room is not built yet. Here is the room description it will be built from.
+                Your empty room at the size you entered. Look around it to check that it matches
+                your real room.
               </p>
             </div>
 
-            <RoomDescriptionView description={description} />
+            <Room3DView room={description.room} />
 
             <div>
               <button
@@ -153,6 +169,8 @@ export function RoomPlanner() {
                 Back to your room
               </button>
             </div>
+
+            <RoomDescriptionView description={description} />
           </section>
         )}
       </Step>

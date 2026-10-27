@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FurnitureItem } from "../shared/furniture";
 import { createRoomDescription, parseRoomDescription, type RoomDescription } from "../shared/room-description";
@@ -47,12 +48,16 @@ describe("RoomDescriptionView", () => {
     expect(screen.getByText(/with 1 piece of furniture\./)).toBeTruthy();
   });
 
-  it("is open, so the JSON is visible without a click, and can be folded away", () => {
+  it("is folded away at first, so that it does not take the place of the 3D room, and opens with a click", async () => {
     const { container } = render(<RoomDescriptionView description={makeDescription([sofa])} />);
 
     const details = container.querySelector("details")!;
-    expect(details.open).toBe(true);
+    expect(details.open).toBe(false);
     expect(details.querySelector("summary")?.textContent).toBe("Room description (JSON)");
+
+    await userEvent.setup().click(screen.getByText("Room description (JSON)"));
+
+    expect(details.open).toBe(true);
   });
 
   it("can be reached with the keyboard, since the JSON may be longer than the box", () => {

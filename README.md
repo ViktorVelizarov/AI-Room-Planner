@@ -32,13 +32,14 @@ Open <http://localhost:3000>. The upload page should load without errors.
 | Folder | Purpose |
 | --- | --- |
 | `src/app/` | Pages and API routes (Next.js App Router) |
-| `src/components/` | UI components: the four-step flow (photos, room size, your room, 3D room), the photo uploader, the room size form, the furniture editor and the room description view |
+| `src/components/` | UI components: the four-step flow (photos, room size, your room, 3D room), the photo uploader, the room size form, the furniture editor, the room description view and the 3D room view |
 | `src/client/` | Browser-only helpers: shrinking photos before upload and calling the API |
 | `src/ai/` | AI code: furniture detection and layout generation. Server-side only |
-| `src/viewer/` | 3D rendering code: room scene, furniture models. Browser only |
+| `src/viewer/` | 3D rendering code: the empty 3D room, the camera and its controls, and later the furniture models. Browser only |
 | `src/server/` | Server-only logic behind the API routes: the AI call limit and the request handlers |
 | `src/shared/` | Types and rules used by both browser and server, such as the supported furniture labels and their typical sizes, photo rules, room size limits, the room description and the API response types |
 | `scripts/` | Command-line tools, such as `detect.ts` |
+| `docs/` | Notes that are not code: the furniture model licence research (US-13) |
 
 `src/ai/` and `src/viewer/` must not import from each other, so each can be run and tested on its own. Both may import from `src/shared/`.
 
@@ -49,6 +50,10 @@ Open <http://localhost:3000>. The upload page should load without errors.
 - The answer is validated against a schema. If it is invalid or incomplete, the model is asked once more; if the second answer is also invalid, a `DetectionError` is thrown and no data is used.
 - Things the model labels `other` (not a supported type) are left out of the result.
 - Errors from the call itself (no network, bad key) are not retried.
+
+## Furniture models
+
+The 3D scene will use free models, chosen and checked in US-13: all 15 furniture types come from Kenney's Furniture Kit, which is CC0, so no credit is required (the credits section will name it anyway). `docs/furniture-model-licences.md` lists the libraries that were checked, why this one was chosen, which model stands for each type, and what the models need before use: they are about half real size and their origin is off-centre. The model files themselves are added in US-14.
 
 ## Room description
 
@@ -69,7 +74,19 @@ The room description is the one piece of data the rest of the app builds on: the
 - There are no positions. A piece is identified by its place in `furniture`, which does not change once the description is made, so a layout can refer to "piece 3". Two identical chairs are two entries.
 - `createRoomDescription(room, furniture)` and `parseRoomDescription(input)` in `src/shared/room-description.ts` are the way to get a `RoomDescription`. Both return `{ ok: true, description }` or `{ ok: false, problems }`, and never throw. `problems` are plain sentences that say what is missing or wrong, such as `Furniture item 2 (Sofa): the depth is missing.` or `The furniture list is empty. Add at least one piece of furniture.`; every problem is listed, not only the first.
 - `parseRoomDescription` takes anything, such as JSON that was saved or sent in a request, so the server can check a description it receives instead of trusting the browser. It returns a clean copy with only the fields above. The schema itself is `roomDescriptionSchema`.
-- Until the 3D room is built, its step shows the description as JSON (`RoomDescriptionView`), which is the debug view.
+- The 3D room step shows the description as JSON (`RoomDescriptionView`), folded away below the 3D view. It is the debug view.
+
+## 3D room
+
+The "3D room" step shows an empty room in the size the user entered, drawn with Three.js (`three`, with its types in `@types/three`). The drawing code is in `src/viewer/` and does not use React; `src/components/room-3d-view.tsx` is the thin wrapper that puts it in the page. The 3D code is loaded when the user reaches this step, not with the page.
+
+- **Axes.** One unit is one metre. The origin is the middle of the floor, and y points up from the floor. x runs along the width and z along the length, so the room fills x from minus half the width to plus half the width, y from 0 to the height, and z from minus half the length to plus half the length. For a room 6 m wide, 4.5 m long and 2.5 m high that is x from -3 to 3, y from 0 to 2.5 and z from -2.25 to 2.25. Seen from above with x to the right, z runs down the screen, as in the outline in the "Your room" step. The front of the room is the side where z is largest, which is the side the camera starts on. A piece of furniture stands on the floor, so layouts will place it by x and z alone, measured from the middle of the room on these axes. Which way a piece faces, and which point of it is its position (most naturally the middle of its footprint), are not decided yet (US-14, US-19 and US-20).
+- **Walls.** Every wall faces into the room and is drawn on that side only. From outside, the walls nearest the camera face away from it and are not drawn, so they never hide the room; from inside, all four are drawn. Lines show the edges of the room, and the floor has a line every metre, counted from the corner so that the squares along a wall can be counted against the real room.
+- **Looking around.** Drag to turn the room, scroll or pinch to zoom, and drag with the right button or with two fingers to move the view. With the keyboard, Tab to the view: the arrow keys turn it, + and - zoom, and Shift with an arrow key moves it. **Reset view** puts the camera back at the start.
+- **Camera.** It starts in front of and above the room, far enough away that the whole room is in the frame, whatever the room's shape and the shape of the window (`defaultView` in `camera-view.ts`). It cannot go below the floor or closer than 1 m to the point it looks at, it cannot go farther than 2.5 times its starting distance, and the point it looks at stays inside the room, so the room cannot be lost.
+- **Drawing.** The room is drawn only when something changes (the camera moves or the window changes size), so a room at rest uses no graphics power.
+- **No WebGL.** If the browser cannot make a WebGL context, the step says that the 3D view could not start, and the room description and the way back stay.
+- **Tests.** The room's geometry and the camera maths are unit tests (`camera-view.test.ts`, `room-scene.test.ts`). The viewer is tested with a fake renderer, because jsdom has no WebGL (`room-viewer.test.ts`), so what is really drawn has to be checked in a browser.
 
 ## Environment variables
 

@@ -4,15 +4,28 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DetectOutcome } from "../client/detect-client";
 import { requestDetection } from "../client/detect-client";
+import { createRoomViewer, type RoomViewer } from "../viewer";
 import { RoomPlanner } from "./room-planner";
 
 vi.mock("../client/detect-client", () => ({ requestDetection: vi.fn() }));
 const detect = vi.mocked(requestDetection);
 
+// The 3D view needs WebGL, which jsdom does not have, so the viewer is replaced by one that records what it is asked.
+vi.mock("../viewer", () => ({ createRoomViewer: vi.fn() }));
+const createViewer = vi.mocked(createRoomViewer);
+type FakeViewer = { resetView: ReturnType<typeof vi.fn>; move: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
+let viewers: FakeViewer[];
+
 beforeEach(() => {
   Object.assign(URL, {
     createObjectURL: (file: Blob) => `blob:preview/${(file as File).name}`,
     revokeObjectURL: vi.fn(),
+  });
+  viewers = [];
+  createViewer.mockImplementation(() => {
+    const viewer: FakeViewer = { resetView: vi.fn(), move: vi.fn(), dispose: vi.fn() };
+    viewers.push(viewer);
+    return viewer as unknown as RoomViewer;
   });
 });
 
@@ -248,19 +261,27 @@ describe("RoomPlanner: correcting the furniture", () => {
   });
 });
 
+/** Furniture detected, the default size confirmed: the "Your room" step is open. */
+const setupToSummary = async () => {
+  const view = setup();
+  await view.detectFurniture();
+  await view.user.click(screen.getByRole("button", { name: "Continue to room size" }));
+  await view.user.click(screen.getByRole("button", { name: "Continue" }));
+  return view;
+};
+const toThe3dRoom = () => screen.getByRole("button", { name: "Continue to 3D room" });
+const the3dView = () => screen.findByRole("group", { name: /^3D view of the room/ });
+
+/** Continues to the 3D room, and waits for its 3D view, which is loaded when the step opens. */
+const open3dRoom = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(toThe3dRoom());
+  await the3dView();
+};
+
 describe("RoomPlanner: the room description", () => {
   const EMPTY_LIST = "The furniture list is empty. Add at least one piece of furniture.";
 
-  /** Furniture detected, the default size confirmed: the "Your room" step is open. */
-  const setupToSummary = async () => {
-    const view = setup();
-    await view.detectFurniture();
-    await view.user.click(screen.getByRole("button", { name: "Continue to room size" }));
-    await view.user.click(screen.getByRole("button", { name: "Continue" }));
-    return view;
-  };
   const summary = (step: (name: string) => HTMLElement | null) => within(step("Your room")!);
-  const toThe3dRoom = () => screen.getByRole("button", { name: "Continue to 3D room" });
 
   /** The room description the page shows in the 3D room step, read back from its JSON. */
   const shownDescription = (step: (name: string) => HTMLElement | null) =>
@@ -279,7 +300,7 @@ describe("RoomPlanner: the room description", () => {
     await enter("Length (m)", "4,5");
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(currentStep()).toContain("3D room");
     expect(step("Your room")).toBeNull();
@@ -293,7 +314,7 @@ describe("RoomPlanner: the room description", () => {
     detect.mockResolvedValue(success);
     const { user, step } = await setupToSummary();
 
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(document.activeElement).toBe(step("3D room"));
   });
@@ -319,7 +340,7 @@ describe("RoomPlanner: the room description", () => {
     await user.click(screen.getByRole("button", { name: "Add furniture" }));
     expect(screen.queryByRole("alert")).toBeNull();
 
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(currentStep()).toContain("3D room");
     expect(shownDescription(step).furniture).toEqual([
@@ -335,7 +356,7 @@ describe("RoomPlanner: the room description", () => {
     await enter("Colour", "dark green");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(shownDescription(step).furniture).toEqual([{ ...sofa, width_cm: 250, color: "dark green" }]);
   });
@@ -343,14 +364,14 @@ describe("RoomPlanner: the room description", () => {
   it("replaces the description when the user goes back, changes the furniture and continues again", async () => {
     detect.mockResolvedValue(success);
     const { user, step } = await setupToSummary();
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
     expect(shownDescription(step).furniture).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     await user.click(summary(step).getByRole("button", { name: /^Remove Sofa/ }));
     await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "desk");
     await user.click(screen.getByRole("button", { name: "Add furniture" }));
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(shownDescription(step).furniture.map((piece: { label: string }) => piece.label)).toEqual(["desk"]);
   });
@@ -358,7 +379,7 @@ describe("RoomPlanner: the room description", () => {
   it("replaces the size when the user goes back to the room size, changes it and continues again", async () => {
     detect.mockResolvedValue(success);
     const { user, step, enter } = await setupToSummary();
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
     expect(shownDescription(step).room.width_m).toBe(4);
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
@@ -366,7 +387,7 @@ describe("RoomPlanner: the room description", () => {
     await enter("Width (m)", "8");
     await enter("Height (m)", "3");
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(shownDescription(step).room).toEqual({ width_m: 8, length_m: 5, height_m: 3 });
   });
@@ -376,7 +397,7 @@ describe("RoomPlanner: the room description", () => {
     const { user, step, currentStep } = await setupToSummary();
     await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "rug");
     await user.click(screen.getByRole("button", { name: "Add furniture" }));
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
 
@@ -390,9 +411,105 @@ describe("RoomPlanner: the room description", () => {
     const { user, step } = await setupToSummary();
     const shownSize = summary(step).getByText("4 × 5 m, 2.5 m high");
 
-    await user.click(toThe3dRoom());
+    await open3dRoom(user);
 
     expect(shownSize).toBeTruthy();
     expect(shownDescription(step).room).toEqual({ width_m: 4, length_m: 5, height_m: 2.5 });
+  });
+});
+
+describe("RoomPlanner: the 3D room", () => {
+  const inThe3dRoom = (step: (name: string) => HTMLElement | null) => within(step("3D room")!);
+
+  it("shows the empty room in 3D, in the size the user entered", async () => {
+    detect.mockResolvedValue(success);
+    const { user, enter, detectFurniture } = setup();
+    await detectFurniture();
+    await user.click(screen.getByRole("button", { name: "Continue to room size" }));
+    await enter("Width (m)", "6");
+    await enter("Length (m)", "4,5");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await open3dRoom(user);
+
+    const view = screen.getByRole("group", { name: "3D view of the room: 6 m wide, 4.5 m long, 2.5 m high" });
+    expect(createViewer).toHaveBeenCalledTimes(1);
+    expect(createViewer).toHaveBeenCalledWith(view, { width_m: 6, length_m: 4.5, height_m: 2.5 });
+  });
+
+  it("says what the 3D room is for, and no longer says that it is not built yet", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).getByText(/Your empty room at the size you entered/)).toBeTruthy();
+    expect(screen.queryByText(/not built yet/)).toBeNull();
+  });
+
+  it("does not make the 3D view before the user reaches the 3D room", async () => {
+    detect.mockResolvedValue(success);
+    await setupToSummary();
+
+    expect(createViewer).not.toHaveBeenCalled();
+    expect(screen.queryByRole("group", { name: /^3D view of the room/ })).toBeNull();
+  });
+
+  it("puts the camera back when the user presses Reset view", async () => {
+    detect.mockResolvedValue(success);
+    const { user } = await setupToSummary();
+    await open3dRoom(user);
+
+    await user.click(screen.getByRole("button", { name: "Reset view" }));
+
+    expect(viewers[0].resetView).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the room description for checking, folded away below the 3D view", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+
+    const panel = inThe3dRoom(step).getByText("Room description (JSON)").closest("details")!;
+
+    expect(panel.open).toBe(false);
+    const view = await the3dView();
+    expect(view.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("frees the 3D view when the user goes back, and makes a new one for the new size when they continue again", async () => {
+    detect.mockResolvedValue(success);
+    const { user, enter } = await setupToSummary();
+    await open3dRoom(user);
+    expect(viewers).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+
+    expect(viewers[0].dispose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("group", { name: /^3D view of the room/ })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Back to room size" }));
+    await enter("Width (m)", "8");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await open3dRoom(user);
+
+    expect(viewers).toHaveLength(2);
+    expect(createViewer).toHaveBeenLastCalledWith(expect.anything(), { width_m: 8, length_m: 5, height_m: 2.5 });
+    expect(viewers[1].dispose).not.toHaveBeenCalled();
+  });
+
+  it("says so, and still offers the description and the way back, when the browser cannot show 3D", async () => {
+    detect.mockResolvedValue(success);
+    createViewer.mockImplementation(() => {
+      throw new Error("Error creating WebGL context.");
+    });
+    const { user, step } = await setupToSummary();
+
+    await user.click(toThe3dRoom());
+
+    const alert = await inThe3dRoom(step).findByRole("alert");
+    expect(alert.textContent).toContain("The 3D view could not start");
+    expect(inThe3dRoom(step).getByRole("region", { name: "Room description JSON" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to your room" })).toBeTruthy();
   });
 });
