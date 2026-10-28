@@ -14,7 +14,7 @@ import {
 } from "three";
 import { describe, expect, it, vi } from "vitest";
 import type { RoomSize } from "../shared/room";
-import { createRoomScene, disposeScene } from "./room-scene";
+import { createRoomScene, disposeObject } from "./room-scene";
 
 const room: RoomSize = { width_m: 6, length_m: 4.5, height_m: 2.5 };
 
@@ -194,7 +194,7 @@ describe("createRoomScene", () => {
   });
 });
 
-describe("disposeScene", () => {
+describe("disposeObject", () => {
   it("frees every geometry and material of the scene", () => {
     const scene = createRoomScene(room);
     // The walls share one material, so the parts are collected as objects, each once.
@@ -207,7 +207,7 @@ describe("disposeScene", () => {
     const freed = new Set<unknown>();
     for (const item of held) vi.spyOn(item, "dispose").mockImplementation(() => void freed.add(item));
 
-    disposeScene(scene);
+    disposeObject(scene);
 
     // Seven shapes (floor, four walls, grid, edges) and four materials (floor, wall paint, grid, edges).
     expect(held.size).toBeGreaterThanOrEqual(11);

@@ -19,10 +19,18 @@ export function furnitureLibrary(): ModelLibrary {
   return checked;
 }
 
+/**
+ * The model that stands for a type of furniture, or nothing if the library has none. The library is
+ * checked to have a model for every supported type, so this only answers "no" for a type that is
+ * supported later than the library is made.
+ */
+export function findModel(label: FurnitureLabel): ModelEntry | undefined {
+  return furnitureLibrary().models.find((model) => model.type === label);
+}
+
 /** The model that stands for a type of furniture. */
 export function modelFor(label: FurnitureLabel): ModelEntry {
-  const entry = furnitureLibrary().models.find((model) => model.type === label);
-  // The library is checked to have a model for every type, so this only guards the types.
+  const entry = findModel(label);
   if (!entry) throw new Error(`The furniture library has no model for ${label}.`);
   return entry;
 }
@@ -58,4 +66,13 @@ export async function loadFurnitureModel(label: FurnitureLabel, fetchFile: typeo
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`The model for ${label} could not be read: ${reason}`);
   }
+}
+
+/**
+ * Loads the model for a type, or answers `null` if the library has no model for it, which is not
+ * an error: the piece is shown without one. A model that is in the library but cannot be loaded is
+ * an error, as in `loadFurnitureModel`.
+ */
+export async function loadModelIfAny(label: FurnitureLabel): Promise<Group | null> {
+  return findModel(label) ? loadFurnitureModel(label) : null;
 }

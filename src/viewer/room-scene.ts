@@ -10,6 +10,7 @@ import {
   LineSegments,
   Mesh,
   MeshLambertMaterial,
+  type Object3D,
   PlaneGeometry,
   Scene,
 } from "three";
@@ -118,9 +119,13 @@ export function createRoomScene(room: RoomSize): Scene {
   return scene;
 }
 
-/** Frees what the scene holds on the graphics card. Call it when the scene is no longer used. */
-export function disposeScene(scene: Scene) {
-  scene.traverse((object) => {
+/**
+ * Frees what an object and everything in it holds on the graphics card: the scene, or a group of
+ * furniture. Call it when it is no longer used. A geometry or material that several parts share
+ * is freed more than once, which does no harm.
+ */
+export function disposeObject(root: Object3D) {
+  root.traverse((object) => {
     if (!(object instanceof Mesh || object instanceof LineSegments)) return;
     object.geometry.dispose();
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) {

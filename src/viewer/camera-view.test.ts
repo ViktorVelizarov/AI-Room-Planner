@@ -1,4 +1,4 @@
-import { MathUtils, PerspectiveCamera, Spherical, Vector3 } from "three";
+import { Box3, MathUtils, PerspectiveCamera, Spherical, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import type { RoomSize } from "../shared/room";
 import {
@@ -127,6 +127,82 @@ describe("defaultView", () => {
 
   it("is the same every time, so that Reset returns to exactly the starting view", () => {
     expect(defaultView(room, 1.5).position.toArray()).toEqual(defaultView(room, 1.5).position.toArray());
+  });
+});
+
+describe("defaultView with something else to fit, such as furniture that sticks out of the room", () => {
+  // A box that reaches 3 m past the front wall and 2 m past each side wall of the room, and is 1 m high.
+  const sticksOut = (size: RoomSize) =>
+    new Box3(new Vector3(-size.width_m / 2 - 2, 0, 0), new Vector3(size.width_m / 2 + 2, 1, size.length_m / 2 + 3));
+
+  const cornersOf = (box: Box3, view: CameraView, aspect: number) => {
+    const camera = cameraAt(view, aspect);
+    const corners: Vector3[] = [];
+    for (const x of [box.min.x, box.max.x]) {
+      for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new Vector3(x, y, z).project(camera));
+    }
+    return corners;
+  };
+
+  it("changes nothing when it is inside the room, so a furnished room starts where an empty one does", () => {
+    for (const size of ROOMS) {
+      const inside = new Box3(new Vector3(-size.width_m / 2 + 0.1, 0, -size.length_m / 2 + 0.1), new Vector3(size.width_m / 2 - 0.1, 1, size.length_m / 2 - 0.1));
+      for (const aspect of ASPECTS) {
+        const without = defaultView(size, aspect);
+        const within = defaultView(size, aspect, inside);
+
+        expect(within.position.toArray(), `${JSON.stringify(size)} at aspect ${aspect}`).toEqual(without.position.toArray());
+        expect(within.target.toArray()).toEqual(without.target.toArray());
+      }
+    }
+  });
+
+  it("changes nothing for a box that has nothing in it, or for no box at all", () => {
+    expect(defaultView(room, 1.5, new Box3()).position.toArray()).toEqual(defaultView(room, 1.5).position.toArray());
+    expect(defaultView(room, 1.5, null).position.toArray()).toEqual(defaultView(room, 1.5).position.toArray());
+  });
+
+  it("has all of it in the frame as well as the whole room, for every room size and every shape of frame", () => {
+    for (const size of ROOMS) {
+      const extra = sticksOut(size);
+      for (const aspect of ASPECTS) {
+        const view = defaultView(size, aspect, extra);
+        for (const corner of [...cornersInFrame(size, view, aspect), ...cornersOf(extra, view, aspect)]) {
+          const where = `${JSON.stringify(size)} at aspect ${aspect}`;
+          expect(Math.abs(corner.x), where).toBeLessThanOrEqual(1);
+          expect(Math.abs(corner.y), where).toBeLessThanOrEqual(1);
+          expect(Math.abs(corner.z), where).toBeLessThan(1);
+        }
+      }
+    }
+  });
+
+  it("goes farther away to do it, and still fills the frame without wasting it", () => {
+    for (const size of ROOMS) {
+      const extra = sticksOut(size);
+      const view = defaultView(size, 1.5, extra);
+
+      expect(distanceOf(view), JSON.stringify(size)).toBeGreaterThan(distanceOf(defaultView(size, 1.5)));
+      const widest = Math.max(...[...cornersInFrame(size, view, 1.5), ...cornersOf(extra, view, 1.5)].flatMap((c) => [Math.abs(c.x), Math.abs(c.y)]));
+      expect(widest, JSON.stringify(size)).toBeCloseTo(0.92, 5);
+    }
+  });
+
+  it("still looks at the middle of the room, from the same direction", () => {
+    const without = defaultView(room, 1.5);
+    const view = defaultView(room, 1.5, sticksOut(room));
+
+    expect(view.target.toArray()).toEqual(without.target.toArray());
+    const direction = (v: CameraView) => v.position.clone().sub(v.target).normalize();
+    expect(direction(view).distanceTo(direction(without))).toBeCloseTo(0, 9);
+  });
+
+  it("lets the camera go back farther too, in proportion", () => {
+    const extra = sticksOut(room);
+
+    expect(distanceLimits(room, 1.5, extra).max).toBeGreaterThan(distanceLimits(room, 1.5).max);
+    expect(distanceLimits(room, 1.5, extra).max / distanceOf(defaultView(room, 1.5, extra))).toBeCloseTo(2.5, 5);
+    expect(distanceLimits(room, 1.5, extra).min).toBe(MIN_DISTANCE);
   });
 });
 

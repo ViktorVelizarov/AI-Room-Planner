@@ -1,4 +1,4 @@
-import { MathUtils, Spherical, Vector3 } from "three";
+import { MathUtils, Spherical, Vector3, type Box3 } from "three";
 import type { RoomSize } from "../shared/room";
 
 /** Vertical field of view of the camera, in degrees. */
@@ -55,12 +55,12 @@ const safeAspect = (aspect: number) => (Number.isFinite(aspect) && aspect > 0 ? 
 /**
  * The view the camera starts in and returns to on Reset: it looks at the middle of the room from
  * far enough away that the whole room is in the frame, whatever the room's shape and the shape of
- * the frame (`aspect` is its width divided by its height).
+ * the frame (`aspect` is its width divided by its height). `also` is a box of anything else that
+ * is to be in the frame, such as furniture that sticks out of the room; one that is inside the
+ * room changes nothing.
  */
-export function defaultView(room: RoomSize, aspect: number): CameraView {
+export function defaultView(room: RoomSize, aspect: number, also?: Box3 | null): CameraView {
   const { width_m, length_m, height_m } = room;
-  const halfWidth = width_m / 2;
-  const halfLength = length_m / 2;
   // The room is centred on the origin (see room-scene.ts), so its middle is halfway up the axis.
   const target = new Vector3(0, height_m / 2, 0);
 
@@ -71,29 +71,33 @@ export function defaultView(room: RoomSize, aspect: number): CameraView {
   const tanVertical = Math.tan(MathUtils.degToRad(FIELD_OF_VIEW) / 2);
   const tanHorizontal = tanVertical * safeAspect(aspect);
 
+  // The corners of the room, and of the box that is to be in the frame as well.
+  const corners: Vector3[] = [];
+  const addCornersOf = (min: Vector3, max: Vector3) => {
+    for (const x of [min.x, max.x]) for (const y of [min.y, max.y]) for (const z of [min.z, max.z]) corners.push(new Vector3(x, y, z));
+  };
+  addCornersOf(new Vector3(-width_m / 2, 0, -length_m / 2), new Vector3(width_m / 2, height_m, length_m / 2));
+  if (also && !also.isEmpty()) addCornersOf(also.min, also.max);
+
   // A corner that lies `across` to the side and `beyond` the target is in the frame when
   // across <= (distance + beyond) * tan * FILL. Take the distance that every corner needs.
   let distance = 0;
-  for (const x of [-halfWidth, halfWidth]) {
-    for (const y of [0, height_m]) {
-      for (const z of [-halfLength, halfLength]) {
-        const corner = new Vector3(x, y, z).sub(target);
-        const beyond = corner.dot(forward);
-        const needed = Math.max(
-          Math.abs(corner.dot(right)) / (tanHorizontal * FILL),
-          Math.abs(corner.dot(up)) / (tanVertical * FILL),
-        );
-        distance = Math.max(distance, needed - beyond);
-      }
-    }
+  for (const point of corners) {
+    const corner = point.sub(target);
+    const beyond = corner.dot(forward);
+    const needed = Math.max(
+      Math.abs(corner.dot(right)) / (tanHorizontal * FILL),
+      Math.abs(corner.dot(up)) / (tanVertical * FILL),
+    );
+    distance = Math.max(distance, needed - beyond);
   }
 
   return { target, position: target.clone().addScaledVector(START_DIRECTION, distance) };
 }
 
-/** How near and how far the camera may be from the point it looks at. */
-export function distanceLimits(room: RoomSize, aspect: number): { min: number; max: number } {
-  const { position, target } = defaultView(room, aspect);
+/** How near and how far the camera may be from the point it looks at. `also` is as for `defaultView`. */
+export function distanceLimits(room: RoomSize, aspect: number, also?: Box3 | null): { min: number; max: number } {
+  const { position, target } = defaultView(room, aspect, also);
   return { min: MIN_DISTANCE, max: position.distanceTo(target) * MAX_DISTANCE_FACTOR };
 }
 

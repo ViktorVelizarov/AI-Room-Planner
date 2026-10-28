@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { Box3, type PerspectiveCamera, type Scene, Spherical, Vector3 } from "three";
+import { Box3, BoxGeometry, Group, Mesh, MeshLambertMaterial, type Object3D, type PerspectiveCamera, type Scene, Spherical, Vector3 } from "three";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { typicalItem, type FurnitureLabel } from "../shared/furniture";
 import type { RoomSize } from "../shared/room";
 import { MIN_DISTANCE, defaultView, distanceLimits, type CameraView } from "./camera-view";
-import { createRoomViewer, type RoomViewer } from "./room-viewer";
+import type { ModelLoader, PlacedPiece } from "./furniture-scene";
+import { createRoomViewer, type RoomViewer, type RoomViewerOptions } from "./room-viewer";
 
 // jsdom has no WebGL, so the renderer is replaced by one that only records what it is asked to do.
 // The camera controls are the real ones.
@@ -90,13 +92,13 @@ afterEach(() => {
 });
 
 /** A viewer in a container the size of `frame`, with the fake renderer it was given. */
-function open(size: RoomSize = room) {
+function open(size: RoomSize = room, options?: RoomViewerOptions) {
   const container = document.createElement("div");
   Object.defineProperty(container, "clientWidth", { get: () => frame.width });
   Object.defineProperty(container, "clientHeight", { get: () => frame.height });
   document.body.append(container);
 
-  const viewer = createRoomViewer(container, size);
+  const viewer = createRoomViewer(container, size, options);
   live.push(viewer);
   const renderer = fake.FakeRenderer.instances[fake.FakeRenderer.instances.length - 1];
   return { container, viewer, renderer, canvas: renderer.domElement };
@@ -618,5 +620,235 @@ describe("dispose", () => {
     viewer.dispose();
 
     expect(dispose).toHaveBeenCalled();
+  });
+});
+
+describe("showFurniture", () => {
+  // A model of one metre, which stands on the floor, as the library's models do.
+  const model = () => new Group().add(new Mesh(new BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new MeshLambertMaterial()));
+  const piece = (type: FurnitureLabel, x = 0, z = 0): PlacedPiece => ({ item: typicalItem(type), placement: { x_m: x, z_m: z } });
+  const loadsModels = () => vi.fn<ModelLoader>(async () => model());
+
+  /** The scene that the viewer draws. It is only known once something has been drawn. */
+  const sceneOf = (renderer: { render: { mock: { calls: unknown[][] } } }) => {
+    flushFrames();
+    return renderer.render.mock.calls[0][0] as Scene;
+  };
+  const furnitureIn = (scene: Scene) => scene.getObjectByName("furniture");
+
+  it("puts the pieces in the room, once they are all loaded, and draws them", async () => {
+    const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+    const scene = sceneOf(renderer);
+    expect(furnitureIn(scene)).toBeUndefined();
+
+    const report = await viewer.showFurniture([piece("sofa", -1, 0), piece("desk", 1, 0)]);
+
+    expect(report).toEqual({ count: 2, unmatched: [] });
+    expect(furnitureIn(scene)!.children).toHaveLength(2);
+    flushFrames();
+    expect(renderer.render).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows nothing until every piece is ready, instead of the pieces one by one", async () => {
+    const waiting: Record<string, (loaded: Object3D) => void> = {};
+    const loadModel: ModelLoader = (type) => new Promise((resolve) => (waiting[type] = resolve));
+    const { viewer, renderer } = open(room, { loadModel });
+    const scene = sceneOf(renderer);
+
+    const showing = viewer.showFurniture([piece("sofa"), piece("desk")]);
+    waiting.sofa(model());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(furnitureIn(scene)).toBeUndefined();
+
+    waiting.desk(model());
+    await showing;
+    expect(furnitureIn(scene)!.children).toHaveLength(2);
+  });
+
+  it("reports the pieces that have no model and are plain boxes", async () => {
+    const loadModel: ModelLoader = async (type) => (type === "bed" ? null : model());
+    const { viewer } = open(room, { loadModel });
+
+    const report = await viewer.showFurniture([piece("sofa"), piece("bed"), piece("desk")]);
+
+    expect(report).toEqual({ count: 3, unmatched: [{ index: 1, type: "bed", reason: "no-model" }] });
+  });
+
+  it("puts a new set of furniture in place of the old one, and frees the old one", async () => {
+    const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+    const scene = sceneOf(renderer);
+    await viewer.showFurniture([piece("sofa"), piece("desk"), piece("bed")]);
+    const old = furnitureIn(scene)!;
+    const oldGeometry = (old.children[0].children[0] as Mesh).geometry;
+    const freed = vi.spyOn(oldGeometry, "dispose");
+
+    const report = await viewer.showFurniture([piece("rug")]);
+
+    expect(report?.count).toBe(1);
+    expect(scene.children.filter((child) => child.name === "furniture")).toHaveLength(1);
+    expect(furnitureIn(scene)).not.toBe(old);
+    expect(furnitureIn(scene)!.children).toHaveLength(1);
+    expect(freed).toHaveBeenCalled();
+  });
+
+  it("lets the latest call win when an earlier one is still loading, and drops the earlier one", async () => {
+    let finishFirst: (loaded: Object3D) => void = () => {};
+    let calls = 0;
+    const loadModel: ModelLoader = () => (++calls === 1 ? new Promise((resolve) => (finishFirst = resolve)) : Promise.resolve(model()));
+    const { viewer, renderer } = open(room, { loadModel });
+    const scene = sceneOf(renderer);
+
+    const first = viewer.showFurniture([piece("sofa")]);
+    const second = await viewer.showFurniture([piece("desk"), piece("bed")]);
+    finishFirst(model());
+
+    expect(second).toEqual({ count: 2, unmatched: [] });
+    expect(await first).toBeNull();
+    expect(furnitureIn(scene)!.children).toHaveLength(2);
+    expect(furnitureIn(scene)!.children.map((child) => child.userData.type)).toEqual(["desk", "bed"]);
+  });
+
+  it("shows only one set of furniture when it is asked twice in a row, as React does while developing", async () => {
+    const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+    const scene = sceneOf(renderer);
+
+    const [first, second] = await Promise.all([viewer.showFurniture([piece("sofa")]), viewer.showFurniture([piece("sofa")])]);
+
+    expect([first, second]).toEqual([null, { count: 1, unmatched: [] }]);
+    expect(scene.children.filter((child) => child.name === "furniture")).toHaveLength(1);
+    expect(furnitureIn(scene)!.children).toHaveLength(1);
+  });
+
+  describe("when some of the furniture sticks out of the room", () => {
+    const aspect = 600 / 400;
+    // The room is 4.5 m long, so a sofa in the middle of z = 4 is far past the front wall.
+    const outside = () => [piece("sofa", 0, 4)];
+    const boxOfFurniture = (scene: Scene) => new Box3().setFromObject(scene.getObjectByName("furniture")!);
+
+    it("starts with all of it in the frame, farther away than for the room alone", async () => {
+      const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+      const scene = sceneOf(renderer);
+      const roomOnly = viewer.getView();
+
+      await viewer.showFurniture(outside());
+
+      expectSameView(viewer.getView(), defaultView(room, aspect, boxOfFurniture(scene)));
+      expect(distanceOf(viewer.getView())).toBeGreaterThan(distanceOf(roomOnly));
+    });
+
+    it("starts where the empty room started when the furniture is inside the room", async () => {
+      const { viewer } = open(room, { loadModel: loadsModels() });
+      const roomOnly = asArrays(viewer.getView());
+
+      await viewer.showFurniture([piece("sofa", 0, 0), piece("desk", 1, -1)]);
+
+      expect(asArrays(viewer.getView())).toEqual(roomOnly);
+    });
+
+    it("puts the camera back, on Reset, at the start that has the furniture in the frame", async () => {
+      const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+      const scene = sceneOf(renderer);
+      await viewer.showFurniture(outside());
+      const start = asArrays(viewer.getView());
+      viewer.move("turn-left");
+      viewer.move("zoom-in");
+
+      viewer.resetView();
+
+      expect(asArrays(viewer.getView())).toEqual(start);
+      expectSameView(viewer.getView(), defaultView(room, aspect, boxOfFurniture(scene)));
+    });
+
+    it("does not move a camera that the user has already moved when the furniture arrives", async () => {
+      const { viewer } = open(room, { loadModel: loadsModels() });
+      viewer.move("turn-left");
+      const placed = asArrays(viewer.getView());
+
+      await viewer.showFurniture(outside());
+
+      expect(asArrays(viewer.getView())).toEqual(placed);
+    });
+
+    it("goes back to the start for the room alone when furniture that was inside replaces it", async () => {
+      const { viewer } = open(room, { loadModel: loadsModels() });
+      const roomOnly = asArrays(viewer.getView());
+      await viewer.showFurniture(outside());
+      expect(asArrays(viewer.getView())).not.toEqual(roomOnly);
+
+      await viewer.showFurniture([piece("sofa", 0, 0)]);
+
+      expect(asArrays(viewer.getView())).toEqual(roomOnly);
+    });
+
+    it("lets the camera go back as far as the furniture needs, but no farther", async () => {
+      const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+      const scene = sceneOf(renderer);
+      await viewer.showFurniture(outside());
+
+      for (let i = 0; i < 80; i++) viewer.move("zoom-out");
+
+      expect(distanceOf(viewer.getView())).toBeCloseTo(distanceLimits(room, aspect, boxOfFurniture(scene)).max, 6);
+    });
+  });
+
+  it("puts nothing in the room, and says so, for an empty list", async () => {
+    const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+    const scene = sceneOf(renderer);
+
+    expect(await viewer.showFurniture([])).toEqual({ count: 0, unmatched: [] });
+    expect(furnitureIn(scene)!.children).toHaveLength(0);
+  });
+
+  it("answers null, and adds nothing, if the viewer is disposed while the models load", async () => {
+    let finish: (loaded: Object3D) => void = () => {};
+    const loadModel: ModelLoader = () => new Promise((resolve) => (finish = resolve));
+    const { viewer, renderer } = open(room, { loadModel });
+    const scene = sceneOf(renderer);
+
+    const showing = viewer.showFurniture([piece("sofa")]);
+    viewer.dispose();
+    finish(model());
+
+    expect(await showing).toBeNull();
+    expect(furnitureIn(scene)).toBeUndefined();
+    flushFrames();
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing, and does not load anything, once the viewer has been disposed", async () => {
+    const loadModel = loadsModels();
+    const { viewer } = open(room, { loadModel });
+    viewer.dispose();
+
+    expect(await viewer.showFurniture([piece("sofa")])).toBeNull();
+    expect(loadModel).not.toHaveBeenCalled();
+  });
+
+  it("frees the furniture together with the room when the viewer is disposed", async () => {
+    const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+    const scene = sceneOf(renderer);
+    await viewer.showFurniture([piece("sofa")]);
+    const geometry = (furnitureIn(scene)!.children[0].children[0] as Mesh).geometry;
+    const freed = vi.spyOn(geometry, "dispose");
+
+    viewer.dispose();
+
+    expect(freed).toHaveBeenCalled();
+  });
+
+  it("is asked for the models by the library, unless something else is given", async () => {
+    // Without a loader of its own the viewer uses the furniture library, which fetches the files by address.
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", async (input: string) => {
+      fetched.push(String(input));
+      return new Response("not found", { status: 404 });
+    });
+    const { viewer } = open();
+
+    const report = await viewer.showFurniture([piece("sofa"), piece("sofa", 2)]);
+
+    expect(fetched).toEqual(["/models/sofa.glb"]);
+    expect(report?.unmatched.map((one) => one.reason)).toEqual(["load-failed", "load-failed"]);
   });
 });

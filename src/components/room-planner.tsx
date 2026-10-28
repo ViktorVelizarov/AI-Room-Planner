@@ -153,12 +153,13 @@ export function RoomPlanner() {
                 3D room
               </h2>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Your empty room at the size you entered. Look around it to check that it matches
-                your real room.
+                Your room at the size you entered, with your furniture lined up along the back wall
+                in the order of your list. Look around it to check that the room and the furniture
+                match the real ones.
               </p>
             </div>
 
-            <Room3DView room={description.room} />
+            <Room3DView description={description} />
 
             <div>
               <button

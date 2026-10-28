@@ -1,4 +1,4 @@
-import { PerspectiveCamera, WebGLRenderer } from "three";
+import { Box3, PerspectiveCamera, WebGLRenderer, type Object3D } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { RoomSize } from "../shared/room";
 import {
@@ -10,10 +10,21 @@ import {
   type CameraMove,
   type CameraView,
 } from "./camera-view";
-import { createRoomScene, disposeScene } from "./room-scene";
+import { loadModelIfAny } from "./furniture-library";
+import { buildFurniture, type ModelLoader, type PlacedPiece, type UnmatchedPiece } from "./furniture-scene";
+import { createRoomScene, disposeObject } from "./room-scene";
+
+/** What `showFurniture` found: how many pieces are in the room, and which of them are plain boxes for want of a model. */
+export type FurnitureReport = { count: number; unmatched: UnmatchedPiece[] };
 
 /** A 3D view of a room in a page, which the user can look around. */
 export type RoomViewer = {
+  /**
+   * Puts these pieces of furniture in the room, in place of any that were shown before. They are
+   * loaded first, so nothing changes until all of them are ready. Answers with what was shown once
+   * they are in the room, or with `null` if a later call, or `dispose`, came first.
+   */
+  showFurniture(pieces: readonly PlacedPiece[]): Promise<FurnitureReport | null>;
   /** Puts the camera back where it started. */
   resetView(): void;
   /** Moves the camera one step, as the keyboard does. */
@@ -24,14 +35,21 @@ export type RoomViewer = {
   dispose(): void;
 };
 
+export type RoomViewerOptions = {
+  /** Where the furniture models come from: the furniture library, unless something else is given. */
+  loadModel?: ModelLoader;
+};
+
 /**
- * Shows an empty room of the given size in the container, which should have a size of its own.
- * Dragging turns the room, scrolling or pinching zooms, and dragging with the right button or with
- * two fingers moves the view. The room is drawn only when something changes.
+ * Shows an empty room of the given size in the container, which should have a size of its own,
+ * and the furniture that `showFurniture` is given. Dragging turns the room, scrolling or pinching
+ * zooms, and dragging with the right button or with two fingers moves the view. The room is drawn
+ * only when something changes.
  *
  * Throws if the browser cannot make a WebGL context. Nothing has been added to the page then.
  */
-export function createRoomViewer(container: HTMLElement, room: RoomSize): RoomViewer {
+export function createRoomViewer(container: HTMLElement, room: RoomSize, options: RoomViewerOptions = {}): RoomViewer {
+  const loadModel = options.loadModel ?? loadModelIfAny;
   const renderer = new WebGLRenderer({ antialias: true, alpha: true });
   const canvas = renderer.domElement;
   Object.assign(canvas.style, { display: "block", width: "100%", height: "100%" });
@@ -48,6 +66,10 @@ export function createRoomViewer(container: HTMLElement, room: RoomSize): RoomVi
 
   let disposed = false;
   let frame = 0;
+  // The furniture in the room now, the box around it, and which call of `showFurniture` is the latest.
+  let furniture: Object3D | null = null;
+  let furnitureBox: Box3 | null = null;
+  let latestCall = 0;
   // Whether the user has moved the camera since it was last put at the start. If not, a change of
   // the frame's shape (a phone turned on its side) puts it at the start again to fit the room.
   let moved = false;
@@ -80,11 +102,12 @@ export function createRoomViewer(container: HTMLElement, room: RoomSize): RoomVi
     camera.aspect = width > 0 && height > 0 ? width / height : 1;
     camera.updateProjectionMatrix();
 
-    const { min, max } = distanceLimits(room, camera.aspect);
+    // The starting view has the furniture in the frame too, if any of it sticks out of the room.
+    const { min, max } = distanceLimits(room, camera.aspect, furnitureBox);
     controls.minDistance = min;
     controls.maxDistance = max;
     if (moved) requestDraw();
-    else show(defaultView(room, camera.aspect));
+    else show(defaultView(room, camera.aspect, furnitureBox));
   };
 
   controls.addEventListener("start", () => {
@@ -112,10 +135,30 @@ export function createRoomViewer(container: HTMLElement, room: RoomSize): RoomVi
   fit();
 
   return {
+    async showFurniture(pieces) {
+      if (disposed) return null;
+      const call = ++latestCall;
+      const built = await buildFurniture(pieces, loadModel);
+      // Something else was asked for, or the viewer has gone, while the models loaded.
+      if (disposed || call !== latestCall) {
+        disposeObject(built.group);
+        return null;
+      }
+      if (furniture) {
+        scene.remove(furniture);
+        disposeObject(furniture);
+      }
+      furniture = built.group;
+      scene.add(furniture);
+      furnitureBox = new Box3().setFromObject(furniture);
+      // Fitting again draws the room, and puts the camera at a start that has the furniture in the frame, unless it has been moved.
+      fit();
+      return { count: pieces.length, unmatched: built.unmatched };
+    },
     resetView() {
       if (disposed) return;
       moved = false;
-      show(defaultView(room, camera.aspect));
+      show(defaultView(room, camera.aspect, furnitureBox));
     },
     move(move) {
       if (disposed) return;
@@ -132,7 +175,7 @@ export function createRoomViewer(container: HTMLElement, room: RoomSize): RoomVi
       canvas.removeEventListener("webglcontextlost", keepContext);
       canvas.removeEventListener("webglcontextrestored", requestDraw);
       controls.dispose();
-      disposeScene(scene);
+      disposeObject(scene);
       renderer.dispose();
       // Browsers allow only a few graphics contexts at once, so give this one back now.
       renderer.forceContextLoss();

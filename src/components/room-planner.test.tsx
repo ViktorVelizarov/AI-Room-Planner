@@ -4,17 +4,28 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DetectOutcome } from "../client/detect-client";
 import { requestDetection } from "../client/detect-client";
-import { createRoomViewer, type RoomViewer } from "../viewer";
+import { createRoomViewer, type FurnitureReport, type RoomViewer } from "../viewer";
 import { RoomPlanner } from "./room-planner";
 
 vi.mock("../client/detect-client", () => ({ requestDetection: vi.fn() }));
 const detect = vi.mocked(requestDetection);
 
 // The 3D view needs WebGL, which jsdom does not have, so the viewer is replaced by one that records what it is asked.
-vi.mock("../viewer", () => ({ createRoomViewer: vi.fn() }));
+// The rest of the viewer module, such as the arrangement of the furniture, is the real one.
+vi.mock("../viewer", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../viewer")>()),
+  createRoomViewer: vi.fn(),
+}));
 const createViewer = vi.mocked(createRoomViewer);
-type FakeViewer = { resetView: ReturnType<typeof vi.fn>; move: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
+type FakeViewer = {
+  resetView: ReturnType<typeof vi.fn>;
+  move: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  showFurniture: ReturnType<typeof vi.fn>;
+};
 let viewers: FakeViewer[];
+// What the viewers answer when they are asked to show furniture.
+let furnitureReport: FurnitureReport = { count: 1, unmatched: [] };
 
 beforeEach(() => {
   Object.assign(URL, {
@@ -22,8 +33,14 @@ beforeEach(() => {
     revokeObjectURL: vi.fn(),
   });
   viewers = [];
+  furnitureReport = { count: 1, unmatched: [] };
   createViewer.mockImplementation(() => {
-    const viewer: FakeViewer = { resetView: vi.fn(), move: vi.fn(), dispose: vi.fn() };
+    const viewer: FakeViewer = {
+      resetView: vi.fn(),
+      move: vi.fn(),
+      dispose: vi.fn(),
+      showFurniture: vi.fn(async () => furnitureReport),
+    };
     viewers.push(viewer);
     return viewer as unknown as RoomViewer;
   });
@@ -421,7 +438,7 @@ describe("RoomPlanner: the room description", () => {
 describe("RoomPlanner: the 3D room", () => {
   const inThe3dRoom = (step: (name: string) => HTMLElement | null) => within(step("3D room")!);
 
-  it("shows the empty room in 3D, in the size the user entered", async () => {
+  it("shows the room in 3D, in the size the user entered", async () => {
     detect.mockResolvedValue(success);
     const { user, enter, detectFurniture } = setup();
     await detectFurniture();
@@ -432,19 +449,74 @@ describe("RoomPlanner: the 3D room", () => {
 
     await open3dRoom(user);
 
-    const view = screen.getByRole("group", { name: "3D view of the room: 6 m wide, 4.5 m long, 2.5 m high" });
+    const view = screen.getByRole("group", { name: "3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 1 piece of furniture" });
     expect(createViewer).toHaveBeenCalledTimes(1);
     expect(createViewer).toHaveBeenCalledWith(view, { width_m: 6, length_m: 4.5, height_m: 2.5 });
   });
 
-  it("says what the 3D room is for, and no longer says that it is not built yet", async () => {
+  it("says what the 3D room is for: the room and the furniture, to check against the real ones", async () => {
     detect.mockResolvedValue(success);
     const { user, step } = await setupToSummary();
 
     await open3dRoom(user);
 
-    expect(inThe3dRoom(step).getByText(/Your empty room at the size you entered/)).toBeTruthy();
-    expect(screen.queryByText(/not built yet/)).toBeNull();
+    expect(inThe3dRoom(step).getByText(/Your room at the size you entered, with your furniture lined up along the back wall/)).toBeTruthy();
+    expect(screen.queryByText(/not built yet|Your empty room/)).toBeNull();
+  });
+
+  it("puts the furniture of the user's list in the room: the piece the AI found", async () => {
+    detect.mockResolvedValue(success);
+    const { user } = await setupToSummary();
+
+    await open3dRoom(user);
+
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(1);
+    const pieces = viewers[0].showFurniture.mock.calls[0][0];
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0].item).toEqual({ label: "sofa", width_cm: 200, depth_cm: 90, height_cm: 85, color: "grey", material: "fabric" });
+  });
+
+  it("puts the corrections the user made in the room, not what the AI first found", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step, enter } = await setupToSummary();
+    await user.click(within(step("Your room")!).getByRole("button", { name: /^Edit Sofa/ }));
+    await enter("Width (cm)", "250");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "bed");
+    await user.click(screen.getByRole("button", { name: "Add furniture" }));
+
+    await open3dRoom(user);
+
+    const items = viewers[0].showFurniture.mock.calls[0][0].map((piece: { item: { label: string; width_cm: number } }) => [piece.item.label, piece.item.width_cm]);
+    expect(items).toEqual([
+      ["sofa", 250],
+      ["bed", 140],
+    ]);
+  });
+
+  it("tells the user which pieces are plain boxes, in the 3D room", async () => {
+    detect.mockResolvedValue(success);
+    furnitureReport = { count: 1, unmatched: [{ index: 0, type: "sofa", reason: "no-model" }] };
+    const { user, step } = await setupToSummary();
+
+    await open3dRoom(user);
+
+    expect(await inThe3dRoom(step).findByText(/1 piece is shown as a plain grey box of its size.*Sofa \(item 1\)/)).toBeTruthy();
+  });
+
+  it("shows the changed furniture, in a new viewer, when the user goes back, changes the list and comes again", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "rug");
+    await user.click(screen.getByRole("button", { name: "Add furniture" }));
+    expect(within(step("Your room")!).getByText("Furniture in your room (2)")).toBeTruthy();
+
+    await open3dRoom(user);
+
+    expect(viewers).toHaveLength(2);
+    expect(viewers[1].showFurniture.mock.calls[0][0].map((piece: { item: { label: string } }) => piece.item.label)).toEqual(["sofa", "rug"]);
   });
 
   it("does not make the 3D view before the user reaches the 3D room", async () => {
