@@ -24,6 +24,9 @@ export function callsCookie(calls: Calls): string {
   return `${CALLS_COOKIE}=${calls.used}; Path=/api; HttpOnly; SameSite=Lax${secure}`;
 }
 
+/** What the user is told when their session has used all its calls. */
+export const limitMessage = (limit: number) => `You have used all ${limit} AI calls for this session.`;
+
 export class CallLimitError extends Error {
   readonly calls: Calls;
 

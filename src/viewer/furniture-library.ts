@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { FurnitureLabel } from "../shared/furniture";
 import { parseModelLibrary, type ModelEntry, type ModelLibrary } from "../shared/model-library";
 import index from "../../public/models/index.json";
+import { setMainMaterial } from "./appearance";
 
 /** Where the library is on the site: the files of the folder public/models. */
 export const MODEL_FOLDER = "/models";
@@ -41,11 +42,13 @@ export const modelUrl = (entry: ModelEntry) => `${MODEL_FOLDER}/${entry.file}`;
 /**
  * Makes the 3D object of a model from the bytes of its file. The object stands on the floor
  * (y = 0), with the middle of its footprint at x = 0, z = 0, in metres, facing +z, so it only has
- * to be put where it should be. It is as big as the library says (`entry.width_cm` and so on).
+ * to be put where it should be. It is as big as the library says (`entry.width_cm` and so on). It
+ * says which of its materials is the main surface, for the colour and look of a real piece.
  */
 export async function parseFurnitureModel(entry: ModelEntry, data: ArrayBuffer): Promise<Group> {
   const gltf = await new GLTFLoader().parseAsync(data, "");
   gltf.scene.name = entry.type;
+  setMainMaterial(gltf.scene, entry.main_material);
   return gltf.scene;
 }
 

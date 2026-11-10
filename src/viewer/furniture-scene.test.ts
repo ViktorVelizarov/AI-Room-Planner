@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Box3, BoxGeometry, Group, Mesh, MeshLambertMaterial, PlaneGeometry, Vector3, type Object3D } from "three";
+import { Box3, BoxGeometry, Group, Mesh, MeshLambertMaterial, MeshStandardMaterial, PlaneGeometry, Vector3, type Material, type Object3D } from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FURNITURE_LABELS, TYPICAL_ITEMS, typicalItem, type FurnitureItem, type FurnitureLabel } from "../shared/furniture";
+import { resolveColour } from "./colour";
 import { MODEL_FOLDER, loadFurnitureModel } from "./furniture-library";
 import { MODEL_TIMEOUT_MS, buildFurniture, type ModelLoader, type PlacedPiece } from "./furniture-scene";
 import { disposeObject } from "./room-scene";
@@ -114,20 +115,6 @@ describe("buildFurniture: a piece whose type has a model (AC1)", () => {
     expect((await building).group.children).toHaveLength(4);
   });
 
-  it("keeps a model's own materials, which the pieces of its type share until they are given colours", async () => {
-    const { group } = await buildFurniture([placed(sofa), placed(sofa)], realModels);
-
-    const materials = group.children.map((piece) => {
-      let found: unknown;
-      piece.traverse((part) => {
-        if (part instanceof Mesh && !found) found = part.material;
-      });
-      return found;
-    });
-    expect(materials[0]).toBeDefined();
-    expect(materials[0]).toBe(materials[1]);
-  });
-
   it("has an empty group for an empty list", async () => {
     const { group, unmatched } = await buildFurniture([], realModels);
 
@@ -154,6 +141,116 @@ describe("buildFurniture: a piece whose type has a model (AC1)", () => {
 
     expect(sizeCm(group.children[0]).x).toBeCloseTo(0.1, 4);
     expect(sizeCm(group.children[1]).x).toBeCloseTo(1000, 3);
+  });
+});
+
+/** The material of a piece that has the given name in its model's file. */
+function surfaceOf(piece: Object3D, name: string): MeshStandardMaterial {
+  let found: MeshStandardMaterial | undefined;
+  piece.traverse((part) => {
+    if (!(part instanceof Mesh)) return;
+    for (const material of Array.isArray(part.material) ? part.material : [part.material]) if (material.name === name) found = material as MeshStandardMaterial;
+  });
+  if (!found) throw new Error(`no material called ${name}`);
+  return found;
+}
+
+/** Every material of a piece, mesh by mesh. */
+function materialsOfPiece(piece: Object3D): Material[] {
+  const found: Material[] = [];
+  piece.traverse((part) => part instanceof Mesh && found.push(...(Array.isArray(part.material) ? part.material : [part.material])));
+  return found;
+}
+
+const hexOfSurface = (material: MeshStandardMaterial) => material.color.getHexString();
+
+describe("buildFurniture: the colour and material of each piece (US-17)", () => {
+  it("gives the main surface of each piece the colour of its item (AC1)", async () => {
+    const desk = { ...typicalItem("desk"), color: "white", material: "wood" as const };
+
+    const { group } = await buildFurniture([placed(sofa), placed(desk)], realModels);
+
+    // The main surface of a sofa is its upholstery, and of a desk its wood: the model's own names.
+    expect(hexOfSurface(surfaceOf(group.children[0], "carpet"))).toBe(resolveColour("grey")!.getHexString());
+    expect(hexOfSurface(surfaceOf(group.children[1], "wood"))).toBe(resolveColour("white")!.getHexString());
+    // The rest of a model keeps its own colour: a sofa's legs, a desk's handles.
+    expect(hexOfSurface(surfaceOf(group.children[0], "wood"))).not.toBe(resolveColour("grey")!.getHexString());
+    expect(hexOfSurface(surfaceOf(group.children[1], "metal"))).not.toBe(resolveColour("white")!.getHexString());
+  });
+
+  it("gives it the look of the material of its item, so that leather is not matt and metal is metal (AC1)", async () => {
+    const leather = { ...sofa, material: "leather" as const };
+    const metal = { ...sofa, material: "metal" as const };
+
+    const { group } = await buildFurniture([placed(sofa), placed(leather), placed(metal)], realModels);
+
+    const [fabricSurface, leatherSurface, metalSurface] = group.children.map((piece) => surfaceOf(piece, "carpet"));
+    expect(fabricSurface.roughness).toBe(1);
+    expect(leatherSurface.roughness).toBeLessThan(fabricSurface.roughness);
+    expect(metalSurface.metalness).toBeGreaterThan(0.5);
+    expect(fabricSurface.metalness).toBe(0);
+  });
+
+  it("gives two pieces of one type that have different colours a colour each (AC3)", async () => {
+    const red = { ...sofa, color: "red" };
+    const blue = { ...sofa, color: "blue" };
+
+    const { group } = await buildFurniture([placed(red, -1.5), placed(blue, 1.5)], realModels);
+
+    const [first, second] = group.children.map((piece) => surfaceOf(piece, "carpet"));
+    expect(first).not.toBe(second);
+    expect(hexOfSurface(first)).toBe(resolveColour("red")!.getHexString());
+    expect(hexOfSurface(second)).toBe(resolveColour("blue")!.getHexString());
+  });
+
+  it("does not paint the model that its pieces are copied from, so no other piece takes a colour that is not its own (AC3)", async () => {
+    const prototype = await realModels("sofa");
+    const before = hexOfSurface(surfaceOf(prototype!, "carpet"));
+
+    const { group } = await buildFurniture([placed({ ...sofa, color: "red" }), placed({ ...sofa, color: "blue" }), placed({ ...sofa, color: "unknown", material: "other" })], async () => prototype);
+
+    expect(hexOfSurface(surfaceOf(prototype!, "carpet"))).toBe(before);
+    // The piece with nothing to change is the model's own look.
+    expect(hexOfSurface(surfaceOf(group.children[2], "carpet"))).toBe(before);
+    expect(hexOfSurface(surfaceOf(group.children[0], "carpet"))).not.toBe(before);
+  });
+
+  it("keeps the model's own look for a piece whose colour and material are unknown (AC2)", async () => {
+    const unknown = { ...sofa, color: "unknown", material: "other" as const };
+
+    const { group, unmatched } = await buildFurniture([placed(unknown), placed(unknown)], realModels);
+
+    expect(unmatched).toEqual([]);
+    // Nothing to paint, so the pieces of the type share the materials of the model, which is how the model looks as it is.
+    const [first, second] = group.children.map(materialsOfPiece);
+    expect(first.length).toBeGreaterThan(1);
+    expect(first.every((material, index) => material === second[index])).toBe(true);
+    expect(hexOfSurface(surfaceOf(group.children[0], "carpet"))).toBe("f9a39e");
+  });
+
+  it("keeps the model's own look when it does not say which surface is its main one, and does not fail (AC2)", async () => {
+    const plain = new MeshStandardMaterial({ color: 0x336699 });
+    const unnamed = new Group().add(new Mesh(new BoxGeometry(1, 1, 1), plain));
+
+    const { group, unmatched } = await buildFurniture([placed({ ...sofa, color: "red", material: "leather" })], async () => unnamed);
+
+    expect(unmatched).toEqual([]);
+    expect(materialsOfPiece(group.children[0])).toEqual([plain]);
+    expect(plain.color.getHexString()).toBe("336699");
+  });
+
+  it("shows a box for a type that has no model as the same plain grey box whatever the colour and material", async () => {
+    const { group } = await buildFurniture([placed({ ...sofa, color: "red", material: "metal" })], async () => null);
+
+    const meshes: Mesh[] = [];
+    group.traverse((part) => part instanceof Mesh && meshes.push(part));
+    expect((meshes[0].material as MeshLambertMaterial).color.getHexString()).toBe("c9c9c9");
+  });
+
+  it("does not leave the model's name for its main surface on the pieces, which only know their place and type", async () => {
+    const { group } = await buildFurniture([placed({ ...sofa, color: "red" })], realModels);
+
+    expect(group.children[0].userData).toEqual({ index: 0, type: "sofa" });
   });
 });
 

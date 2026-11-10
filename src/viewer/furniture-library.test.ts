@@ -4,6 +4,7 @@ import { Box3, Mesh, Vector3, type Object3D } from "three";
 import { describe, expect, it, vi } from "vitest";
 import { FURNITURE_LABELS, TYPICAL_ITEMS, type FurnitureLabel } from "../shared/furniture";
 import { typesWithoutModel } from "../shared/model-library";
+import { mainMaterialOf } from "./appearance";
 import { glbBounds, materialNames, readGlb } from "./glb";
 import { MODEL_FOLDER, furnitureLibrary, loadFurnitureModel, modelFor, modelUrl, parseFurnitureModel } from "./furniture-library";
 
@@ -141,6 +142,15 @@ describe("loading a model into the scene (AC2)", () => {
 
     expect(sofa.x).toBeGreaterThan(1.8);
     expect(sofa.x).toBeLessThan(2.2);
+  });
+
+  it.each(FURNITURE_LABELS)("%s: says which of its materials is the main surface, for the colour of a real piece (US-17)", async (type) => {
+    const model = await loadFurnitureModel(type, fetchFromDisk);
+    const names = new Set<string>();
+    model.traverse((part) => part instanceof Mesh && names.add((Array.isArray(part.material) ? part.material[0] : part.material).name));
+
+    expect(mainMaterialOf(model)).toBe(modelFor(type).main_material);
+    expect(names.has(mainMaterialOf(model)!)).toBe(true);
   });
 
   it("names the object after the type, and makes a new object each time, so one type can be several pieces", async () => {

@@ -4,8 +4,10 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DetectResponse } from "../shared/api";
 import { toEntries, type FurnitureEntry } from "../shared/furniture-list";
+import { layoutKey } from "../shared/layout";
 import type { RoomSize } from "../shared/room";
 import type { RoomDescription } from "../shared/room-description";
+import { LayoutGenerator } from "./layout-generator";
 import { RoomAnalyzer } from "./room-analyzer";
 import { RoomDescriptionView } from "./room-description-view";
 import { RoomSizeForm } from "./room-size-form";
@@ -142,8 +144,7 @@ export function RoomPlanner() {
       </Step>
 
       <Step active={step === ROOM_3D} label="3D room">
-        {/* Only while this step is open, so the 3D view is made when it is needed and freed when the user leaves. */}
-        {description && step === ROOM_3D && (
+        {description && (
           <section
             aria-labelledby="room-3d-heading"
             className="flex flex-col gap-5 rounded-2xl border border-black/10 p-6 dark:border-white/15"
@@ -154,12 +155,17 @@ export function RoomPlanner() {
               </h2>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                 Your room at the size you entered, with your furniture lined up along the back wall
-                in the order of your list. Look around it to check that the room and the furniture
-                match the real ones.
+                in the order of your list. Each piece takes the colour and material found for it;
+                where there is none, the model keeps its own look. Look around it to check that the
+                room and the furniture match the real ones.
               </p>
             </div>
 
-            <Room3DView description={description} />
+            {/* Only while this step is open, so the 3D view is made when it is needed and freed when the user leaves. */}
+            {step === ROOM_3D && <Room3DView description={description} />}
+
+            {/* It stays while the step is hidden, so that a layout that was paid for, or one that is being made, is not lost when the user goes back. It is made again when what a layout depends on changes: the types and sizes of the furniture, or the floor of the room. */}
+            <LayoutGenerator key={layoutKey(description)} description={description} />
 
             <div>
               <button
@@ -171,7 +177,7 @@ export function RoomPlanner() {
               </button>
             </div>
 
-            <RoomDescriptionView description={description} />
+            {step === ROOM_3D && <RoomDescriptionView description={description} />}
           </section>
         )}
       </Step>

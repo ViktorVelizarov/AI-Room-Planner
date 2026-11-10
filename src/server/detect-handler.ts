@@ -13,14 +13,12 @@ import {
   callsCookie,
   getCallLimit,
   limitCalls,
+  limitMessage,
   readCalls,
 } from "./call-limit";
 
 // Room for the multipart envelope around photos that add up to exactly the size limit.
 const FORM_OVERHEAD_BYTES = 1024 * 1024;
-
-const limitMessage = (limit: number) =>
-  `You have used all ${limit} AI calls for this session.`;
 
 type Options = {
   /** The model call. Replaced in tests so they need no network. */

@@ -11,6 +11,7 @@ import {
   type Object3D,
 } from "three";
 import type { FurnitureItem, FurnitureLabel } from "../shared/furniture";
+import { applyAppearance, mainMaterialOf } from "./appearance";
 import type { Placement } from "./arrangement";
 
 /** A piece of furniture and where it stands. */
@@ -71,11 +72,13 @@ const stretch = (wanted: number, native: number) => (native > 1e-6 ? wanted / na
 
 /**
  * A copy of the model, as big as the piece: stretched along each side to the piece's width, height
- * and depth, and standing where it is placed. A model stands on the floor with the middle of its
- * footprint at its origin, so stretching it about the origin keeps its base on the floor.
+ * and depth, and standing where it is placed, with the colour and the material look of the piece. A
+ * model stands on the floor with the middle of its footprint at its origin, so stretching it about
+ * the origin keeps its base on the floor.
  */
 function placeModel({ model, size }: { model: Object3D; size: Vector3 }, { item, placement }: PlacedPiece, index: number): Object3D {
   const object = model.clone(true);
+  applyAppearance(object, item, mainMaterialOf(model));
   object.scale.set(stretch(item.width_cm / 100, size.x), stretch(item.height_cm / 100, size.y), stretch(item.depth_cm / 100, size.z));
   object.position.set(placement.x_m, 0, placement.z_m);
   object.userData = { index, type: item.label };
@@ -103,10 +106,11 @@ function placeholderBox({ item, placement }: PlacedPiece, index: number): Object
 
 /**
  * Makes the furniture of the 3D room: one object for each piece, in the order of the list, in a
- * group. A piece whose type has a model gets a copy of it, stretched to the piece's size. Each type
- * is loaded once, however many pieces it has, and all the types at the same time. A piece whose
- * type has no model, or whose model cannot be loaded in time, is a plain box of its size, and is
- * listed in `unmatched` so that the user can be told.
+ * group. A piece whose type has a model gets a copy of it, stretched to the piece's size and given
+ * its colour and material look. Each type is loaded once, however many pieces it has, and all the
+ * types at the same time. A piece whose type has no model, or whose model cannot be loaded in time,
+ * is a plain grey box of its size, whatever its colour, and is listed in `unmatched` so that the
+ * user can be told.
  */
 export async function buildFurniture(
   pieces: readonly PlacedPiece[],

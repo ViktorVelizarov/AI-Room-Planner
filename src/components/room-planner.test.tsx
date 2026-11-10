@@ -4,11 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DetectOutcome } from "../client/detect-client";
 import { requestDetection } from "../client/detect-client";
+import type { LayoutOutcome } from "../client/layout-client";
+import { requestLayout } from "../client/layout-client";
 import { createRoomViewer, type FurnitureReport, type RoomViewer } from "../viewer";
 import { RoomPlanner } from "./room-planner";
 
 vi.mock("../client/detect-client", () => ({ requestDetection: vi.fn() }));
 const detect = vi.mocked(requestDetection);
+
+vi.mock("../client/layout-client", () => ({ requestLayout: vi.fn() }));
+const layoutRequest = vi.mocked(requestLayout);
 
 // The 3D view needs WebGL, which jsdom does not have, so the viewer is replaced by one that records what it is asked.
 // The rest of the viewer module, such as the arrangement of the furniture, is the real one.
@@ -464,6 +469,15 @@ describe("RoomPlanner: the 3D room", () => {
     expect(screen.queryByText(/not built yet|Your empty room/)).toBeNull();
   });
 
+  it("says that each piece takes the colour and material found for it, and keeps the model's look when there is none", async () => {
+    detect.mockResolvedValue(success);
+    const { user, step } = await setupToSummary();
+
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).getByText(/Each piece takes the colour and material found for it; where there is none, the model keeps its own look\./)).toBeTruthy();
+  });
+
   it("puts the furniture of the user's list in the room: the piece the AI found", async () => {
     detect.mockResolvedValue(success);
     const { user } = await setupToSummary();
@@ -583,5 +597,185 @@ describe("RoomPlanner: the 3D room", () => {
     expect(alert.textContent).toContain("The 3D view could not start");
     expect(inThe3dRoom(step).getByRole("region", { name: "Room description JSON" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Back to your room" })).toBeTruthy();
+  });
+});
+
+describe("RoomPlanner: the layout", () => {
+  const inThe3dRoom = (step: (name: string) => HTMLElement | null) => within(step("3D room")!);
+  const generateButton = () => screen.getByRole("button", { name: "Generate layout" });
+  const layoutFor = (count: number): LayoutOutcome => ({
+    ok: true,
+    data: {
+      layout: Array.from({ length: count }, (_, index) => ({ x_m: index, z_m: 0, rotation_deg: 0 })),
+      adjusted: [],
+      calls: { used: 1, limit: 10 },
+    },
+  });
+
+  it("is asked for in the 3D room, for the room description that the user confirmed (AC1)", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+
+    await user.click(generateButton());
+
+    expect(layoutRequest).toHaveBeenCalledTimes(1);
+    expect(layoutRequest).toHaveBeenCalledWith({
+      room: { width_m: 4, length_m: 5, height_m: 2.5 },
+      furniture: [{ label: "sofa", width_cm: 200, depth_cm: 90, height_cm: 85, color: "grey", material: "fabric" }],
+    });
+    expect(await inThe3dRoom(step).findByRole("table")).toBeTruthy();
+  });
+
+  it("is not in the other steps", async () => {
+    detect.mockResolvedValue(success);
+    const { step } = await setupToSummary();
+
+    expect(step("Your room")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Generate layout" })).toBeNull();
+  });
+
+  it("leaves the 3D room as it is when no layout can be made, and says why (AC3)", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue({
+      ok: false,
+      failure: { code: "invalid_answer", message: "The AI could not make a usable layout this time. Please try again.", retryable: true, calls: { used: 2, limit: 10 } },
+    });
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+    const showings = viewers[0].showFurniture.mock.calls.length;
+
+    await user.click(generateButton());
+
+    expect((await inThe3dRoom(step).findByRole("alert")).textContent).toContain("The AI could not make a usable layout this time.");
+    expect(viewers).toHaveLength(1);
+    expect(viewers[0].dispose).not.toHaveBeenCalled();
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(showings);
+    expect(screen.getByRole("group", { name: /^3D view of the room/ })).toBeTruthy();
+  });
+
+  it("keeps the layout when the user goes back to the room and continues again without changing anything", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+    await inThe3dRoom(step).findByRole("table");
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    expect(screen.queryByRole("table")).toBeNull(); // the 3D room is hidden
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).getByRole("table")).toBeTruthy();
+    expect(layoutRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not lose a layout that is still being made when the user goes back, and shows it when they return", async () => {
+    detect.mockResolvedValue(success);
+    let finish!: (outcome: LayoutOutcome) => void;
+    layoutRequest.mockReturnValue(new Promise<LayoutOutcome>((resolve) => (finish = resolve)));
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    finish(layoutFor(1));
+    await open3dRoom(user);
+
+    expect(await inThe3dRoom(step).findByRole("table")).toBeTruthy();
+    expect(layoutRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets the layout when the furniture has changed, as it is a layout of other furniture", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+    await inThe3dRoom(step).findByRole("table");
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "rug");
+    await user.click(screen.getByRole("button", { name: "Add furniture" }));
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
+    layoutRequest.mockResolvedValue(layoutFor(2));
+    await user.click(generateButton());
+    expect(layoutRequest).toHaveBeenLastCalledWith(expect.objectContaining({ furniture: expect.arrayContaining([expect.objectContaining({ label: "rug" })]) }));
+    expect(await inThe3dRoom(step).findAllByRole("row")).toHaveLength(3);
+  });
+
+  it("keeps the layout when only the colour, the material or the height of a piece has changed, which a layout does not depend on", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step, enter } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+    await inThe3dRoom(step).findByRole("table");
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    await user.click(within(step("Your room")!).getByRole("button", { name: /^Edit Sofa/ }));
+    await enter("Colour", "dark green");
+    await enter("Height (cm)", "70");
+    await user.selectOptions(screen.getByLabelText("Material"), "leather");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).getByRole("table")).toBeTruthy();
+    expect(layoutRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets the layout when the size of a piece has changed", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step, enter } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+    await inThe3dRoom(step).findByRole("table");
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    await user.click(within(step("Your room")!).getByRole("button", { name: /^Edit Sofa/ }));
+    await enter("Width (cm)", "250");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
+  });
+
+  it("keeps the layout when only the height of the room has changed", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step, enter } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+    await inThe3dRoom(step).findByRole("table");
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    await user.click(screen.getByRole("button", { name: "Back to room size" }));
+    await enter("Height (m)", "3.2");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).getByRole("table")).toBeTruthy();
+    expect(layoutRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets the layout when the size of the room has changed", async () => {
+    detect.mockResolvedValue(success);
+    layoutRequest.mockResolvedValue(layoutFor(1));
+    const { user, step, enter } = await setupToSummary();
+    await open3dRoom(user);
+    await user.click(generateButton());
+    await inThe3dRoom(step).findByRole("table");
+
+    await user.click(screen.getByRole("button", { name: "Back to your room" }));
+    await user.click(screen.getByRole("button", { name: "Back to room size" }));
+    await enter("Width (m)", "8");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await open3dRoom(user);
+
+    expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
   });
 });

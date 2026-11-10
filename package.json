@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "vitest run",
     "detect": "tsx scripts/detect.ts",
-    "models": "tsx scripts/build-model-library.ts"
+    "layout": "tsx scripts/layout.ts",
+    "models": "tsx scripts/build-model-library.ts",
+    "overlaps": "tsx scripts/overlap-research.ts"
   },
   "dependencies": {
     "@google/genai": "^2.27.0",
