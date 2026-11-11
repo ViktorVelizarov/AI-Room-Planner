@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { typicalItem } from "../shared/furniture";
 import type { Pose } from "../shared/layout";
 import { LAYOUT_STYLES, STYLE_IDEAS, isDifferentEnough, type LayoutStyle } from "../shared/layout-styles";
+import { CROWDED_FINE, CROWDED_MIRRORED, CROWDED_TURNED, CROWDED_UNFIXABLE, crowdedAnswer, crowdedRoom } from "../test/crowded-room";
 import { AiTimeoutError } from "./gemini";
 import { LayoutOverlapError, RoomTooFullError } from "./layout";
 import { generateLayouts, type StyleOutcome } from "./layouts";
@@ -221,6 +222,57 @@ describe("generateLayouts: each style succeeds or fails on its own (US-21 AC4)",
     const failure = failureOf(outcomes[0]);
     expect(failure.code === "layout_has_overlaps" && failure.problems.length).toBeGreaterThan(0);
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a layout that cannot be fixed while the others can (US-22 AC3)", () => {
+    // A bedroom that is crowded but not too full: of three answers, the first and the last are arrangements of it, and the second is nearly one, which the app cannot fix.
+    const threeAnswers = () => fakeModel({ spacious: [crowdedAnswer(CROWDED_FINE)], cosy: [crowdedAnswer(CROWDED_UNFIXABLE)], work: [crowdedAnswer(CROWDED_MIRRORED)] });
+
+    it("fails that style, with the problems that are left, and makes the other two as they were", async () => {
+      const model = threeAnswers();
+
+      const outcomes = await generateLayouts(crowdedRoom, LAYOUT_STYLES, model.generate);
+
+      expect(outcomes.map((outcome) => outcome.ok)).toEqual([true, false, true]);
+      expect(okOf(outcomes[0]).poses).toEqual(CROWDED_FINE);
+      expect(okOf(outcomes[2]).poses).toEqual(CROWDED_MIRRORED);
+      const failure = failureOf(outcomes[1]);
+      expect(failure.code).toBe("layout_has_overlaps");
+      expect(failure.code === "layout_has_overlaps" && failure.problems.length).toBeGreaterThan(0);
+    });
+
+    it("has no layout for that style to show: the outcome has no poses, not even those that were as far as the fixing got", async () => {
+      const outcomes = await generateLayouts(crowdedRoom, LAYOUT_STYLES, threeAnswers().generate);
+
+      expect(outcomes[1]).not.toHaveProperty("poses");
+      expect(outcomes[1].ok).toBe(false);
+    });
+
+    it("asks the model once for each style, and not again for the one that failed: fixing is in code", async () => {
+      const model = threeAnswers();
+
+      await generateLayouts(crowdedRoom, LAYOUT_STYLES, model.generate);
+
+      expect(model.generate).toHaveBeenCalledTimes(3);
+      expect(model.callsFor("cosy")).toHaveLength(1);
+    });
+
+    it("does not hold the layouts that were made against the one that failed: they are compared with each other, and are different", async () => {
+      const outcomes = await generateLayouts(crowdedRoom, LAYOUT_STYLES, threeAnswers().generate);
+
+      // No style failed for being too much like another, and nothing was made again.
+      expect(outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.style)).toEqual(["cosy"]);
+    });
+
+    it("can be made again on its own, shown the layouts that were made, and the new layout takes the place of the failure", async () => {
+      const model = fakeModel({ cosy: [crowdedAnswer(CROWDED_TURNED)] });
+      const existing = [{ style: "spacious" as const, poses: CROWDED_FINE }, { style: "work" as const, poses: CROWDED_MIRRORED }];
+
+      const outcomes = await generateLayouts(crowdedRoom, ["cosy"], model.generate, existing);
+
+      expect(okOf(outcomes[0]).poses).toEqual(CROWDED_TURNED);
+      expect(model.requests[0].avoid).toEqual(existing);
+    });
   });
 
   it("says that the call itself failed, with the error as it was, for the style whose call failed, and does not ask that style again", async () => {

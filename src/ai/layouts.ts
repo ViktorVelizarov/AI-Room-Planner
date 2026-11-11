@@ -17,7 +17,7 @@ import type { GenerateLayoutFn } from "./types";
 export type StyleFailure =
   /** The answer was not a usable layout twice in a row. */
   | { code: "invalid_answer"; reasons: string[] }
-  /** The layout still had pieces overlapping or through a wall after the app tried to fix it. */
+  /** The layout still had pieces overlapping or through a wall after the attempts to fix it (`FIX_ATTEMPTS`) ran out. It is not used. */
   | { code: "layout_has_overlaps"; problems: string[] }
   /** The layout was fine, but too much like the others: fewer than half of its pieces are in places of their own. */
   | { code: "too_similar"; own: number; needed: number; pieces: number }

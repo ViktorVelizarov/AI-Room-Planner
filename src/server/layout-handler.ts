@@ -9,6 +9,7 @@ import {
   type StyleOutcome,
 } from "../ai";
 import type { ApiErrorCode, ApiFailure, LayoutsResponse, StyleFailure, StyleFailureCode, StyleResult } from "../shared/api";
+import { FIX_ATTEMPTS } from "../shared/layout-fix";
 import { STYLE_NAMES, type LayoutStyle } from "../shared/layout-styles";
 import { checkLayoutsRequest } from "../shared/layouts-request";
 import {
@@ -36,7 +37,7 @@ function styleFailureMessage(style: LayoutStyle, failure: StyleFailureCode, call
     case "invalid_answer":
       return `The AI could not make a usable ${name} layout this time.`;
     case "layout_has_overlaps":
-      return `The ${name} layout that the AI made still had furniture overlapping after the app tried to fix it.`;
+      return `The ${name} layout still had furniture overlapping, or sticking out of the room, after ${FIX_ATTEMPTS} attempts to fix it, so it is not shown. Try again, or check the size of the room and of the furniture.`;
     case "too_similar":
       return similar
         ? `The ${name} layout was too much like the others: only ${similar.own} of ${similar.pieces} pieces ${similar.own === 1 ? "was" : "were"} in a different place, and at least ${similar.needed} ${similar.needed === 1 ? "is" : "are"} needed.`
@@ -68,7 +69,7 @@ function logFailure(outcome: Extract<StyleOutcome, { ok: false }>) {
       console.error(`[layout] ${style}: invalid answers from the model:`, failure.reasons);
       break;
     case "layout_has_overlaps":
-      console.error(`[layout] ${style}: pieces still overlap after fixing:`, failure.problems);
+      console.error(`[layout] ${style}: pieces still overlap after ${FIX_ATTEMPTS} attempts to fix them:`, failure.problems);
       break;
     case "too_similar":
       console.error(`[layout] ${style}: too like the other layouts: ${failure.own} of ${failure.pieces} pieces in places of their own, ${failure.needed} needed.`);
@@ -173,11 +174,12 @@ export function createLayoutHandler({
     const first = results.find((result) => !result.ok && result.code !== "limit_reached") as StyleFailure;
     if (first.code === "too_similar") return fail("too_similar", first.message, 502);
     if (first.code === "layout_has_overlaps") {
-      return fail(
-        "layout_has_overlaps",
-        "The layout that the AI made still had furniture overlapping after the app tried to fix it. Please try again, or check the size of the room and of the furniture.",
-        502,
-      );
+      // One style asked for is told by name, as in its card; several are told together.
+      const message =
+        results.length === 1
+          ? first.message
+          : `The layouts that the AI made still had furniture overlapping, or sticking out of the room, after ${FIX_ATTEMPTS} attempts to fix each of them, so none is shown. Please try again, or check the size of the room and of the furniture.`;
+      return fail("layout_has_overlaps", message, 502);
     }
     return fail("invalid_answer", "The AI could not make a usable layout this time. Please try again.", 502);
   };

@@ -22,7 +22,7 @@ import {
 import { buildLayoutPrompt } from "../src/ai/layout-prompt";
 import { typicalItem, type FurnitureLabel } from "../src/shared/furniture";
 import { describeFacing, describePiece, floorCoverage } from "../src/shared/layout";
-import { describeProblems, findProblems } from "../src/shared/layout-fix";
+import { FIX_ATTEMPTS, describeProblems, findProblems } from "../src/shared/layout-fix";
 import { LAYOUT_STYLES, STYLE_NAMES, isLayoutStyle, piecesInOwnPlaces, piecesNeededInOwnPlaces, type LayoutStyle } from "../src/shared/layout-styles";
 import { parseRoomDescription, type RoomDescription } from "../src/shared/room-description";
 
@@ -164,7 +164,7 @@ async function main() {
       const { failure } = outcome;
       const name = STYLE_NAMES[outcome.style];
       if (failure.code === "invalid_answer") console.error(`${name}: the AI did not make a usable layout in ${failure.reasons.length} attempts:\n- ${failure.reasons.join("\n- ")}\n`);
-      else if (failure.code === "layout_has_overlaps") console.error(`${name}: the layout could not be made fine:\n- ${failure.problems.join("\n- ")}\n`);
+      else if (failure.code === "layout_has_overlaps") console.error(`${name}: the layout could not be made fine in ${FIX_ATTEMPTS} attempts to fix it, so it is not shown:\n- ${failure.problems.join("\n- ")}\n`);
       else if (failure.code === "too_similar") console.error(`${name}: too much like the other layouts: ${failure.own} of ${failure.pieces} pieces in places of their own, ${failure.needed} needed.\n`);
       else if (failure.error instanceof MissingApiKeyError) console.error(`${failure.error.message}\n`);
       else if (failure.error instanceof AiTimeoutError) console.error(`${name}: the AI did not answer within ${failure.error.timeoutMs / 1000} s. A longer deadline can be set with GEMINI_LAYOUT_TIMEOUT_S (10 to 150).\n`);

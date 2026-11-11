@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { CROWDED_FINE, CROWDED_UNFIXABLE, crowdedRoom } from "../test/crowded-room";
 import {
+  FIX_ATTEMPTS,
   FIX_PIECE_GAP_M,
   FIX_WALL_GAP_M,
   describeProblems,
@@ -534,8 +536,8 @@ describe("fixLayout: make a layout fine, if it can be", () => {
 
     const result = fixLayout([sofa, sofa, sofa, sofa], touching, { width_m: 6, length_m: 6 });
 
-    expect(result).toEqual({ ok: true, poses: touching, adjusted: [] });
-    expect(fixLayout(pieces, fine, room)).toEqual({ ok: true, poses: fine, adjusted: [] });
+    expect(result).toEqual({ ok: true, poses: touching, adjusted: [], attempts: 0 });
+    expect(fixLayout(pieces, fine, room)).toEqual({ ok: true, poses: fine, adjusted: [], attempts: 0 });
   });
 
   it("fixes overlapping pieces and a piece through a wall, and says which pieces it moved", () => {
@@ -743,5 +745,126 @@ describe("fixLayout: make a layout fine, if it can be", () => {
     fixLayout([sofa, table], given, room);
 
     expect(given).toEqual(copy);
+  });
+});
+
+describe("fixLayout: three attempts, and then it gives up (US-22 AC3)", () => {
+  const square = piece("side_table", 100, 100);
+  const floor3: Floor = { width_m: 3, length_m: 3 };
+
+  it("makes three attempts at most", () => {
+    expect(FIX_ATTEMPTS).toBe(3);
+  });
+
+  it("makes none for a layout that is fine as it was given, also one whose pieces only touch", () => {
+    // Two sofas of 2 m side by side, touching in the middle of the room.
+    expect(fixLayout([sofa, sofa], [at(-1, 0), at(1, 0)], room).attempts).toBe(0);
+    expect(fixLayout([sofa, table], [at(0, 1.4, 180), at(0, 0.2)], room).attempts).toBe(0);
+  });
+
+  it("is done with the first attempt when the room has room for the usual gaps, and then makes no other", () => {
+    // Four squares of 1 m on a floor of 3 m x 3 m, each in the others, as if the AI had them too close together.
+    const four = Array.from({ length: 4 }, () => square);
+
+    const result = fixLayout(four, [at(-0.4, -0.4), at(0.4, -0.4), at(-0.4, 0.4), at(0.4, 0.4)], floor3);
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(1);
+    expect(isValid(findProblems(four, result.poses, floor3, { gap: 0.03 - 1e-6, wallGap: 0.02 - 1e-6 }))).toBe(true);
+  });
+
+  it("needs the second attempt when the room is too full for 3 cm between pieces, and aims for 1 cm in it", () => {
+    // Two pieces 0.79 m and 0.41 m deep, one behind the other in a room 1.24 m long: with 3 cm between them and 2 cm to each wall they would need 1.27 m, with 1 cm 1.21 m.
+    const narrow: Floor = { width_m: 1.83, length_m: 1.24 };
+    const pieces2 = [piece("side_table", 127, 79), piece("side_table", 70, 41)];
+
+    const result = fixLayout(pieces2, [at(-0.52, -0.25), at(-0.38, 0.01)], narrow);
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(2);
+  });
+
+  it("needs the third attempt when the room is too full for 1 cm too, and lets the pieces touch in it", () => {
+    // Six squares of 1 m on a floor of 3 m x 3 m: 67% of it. Only with pieces that touch do all six fit.
+    const six = Array.from({ length: 6 }, () => square);
+
+    const result = fixLayout(six, six.map(() => at(0, 0)), floor3);
+
+    expect(result.ok).toBe(true);
+    expect(result.attempts).toBe(3);
+  });
+
+  it("gives up when the three attempts have not made the layout fine, with a layout that is not, and says that all three were made", () => {
+    const tiny: Floor = { width_m: 2.2, length_m: 1.2 };
+
+    const result = fixLayout([sofa, sofa, table], [at(0, 0), at(0.1, 0.1), at(-0.1, 0)], tiny);
+
+    expect(result.ok).toBe(false);
+    expect(result.attempts).toBe(FIX_ATTEMPTS);
+    expect(isValid(findProblems([sofa, sofa, table], result.poses, tiny))).toBe(false);
+  });
+
+  describe("a room that is crowded, but could hold its pieces", () => {
+    const pieces = crowdedRoom.furniture;
+    const floor = crowdedRoom.room;
+
+    it("has an arrangement that is fine, which is what makes an answer that cannot be fixed a failure of the fixing and not of the room", () => {
+      expect(isValid(findProblems(pieces, CROWDED_FINE, floor))).toBe(true);
+    });
+
+    it("gives up on an answer that is nearly that arrangement, after all three attempts, and does not make it fine by turning or losing a piece", () => {
+      const result = fixLayout(pieces, CROWDED_UNFIXABLE, floor);
+
+      expect(result.ok).toBe(false);
+      expect(result.attempts).toBe(FIX_ATTEMPTS);
+      expect(result.poses).toHaveLength(pieces.length);
+      expect(isValid(findProblems(pieces, result.poses, floor))).toBe(false);
+      expect(result.poses.map((pose) => pose.rotation_deg)).toEqual(CROWDED_UNFIXABLE.map((pose) => pose.rotation_deg));
+    });
+
+    it("leaves the arrangement that is fine as it is", () => {
+      expect(fixLayout(pieces, CROWDED_FINE, floor)).toEqual({ ok: true, poses: CROWDED_FINE, adjusted: [], attempts: 0 });
+    });
+  });
+
+  describe("a piece at an angle", () => {
+    // A sofa at -20 degrees in a room that is a little too full: its box is 2.19 m wide, in a room of 2.4 m. The coffee table and the side table
+    // are turned the other way round, which is fine, and are at quarter turns already.
+    const tight: Floor = { width_m: 2.4, length_m: 1.9 };
+    const angled = [piece("sofa", 200, 90), piece("coffee_table", 100, 60), piece("side_table", 45, 45)];
+    const given = [at(-0.16, -0.69, -20), at(0.32, 0.19, 180), at(-0.76, 0.29, 180)];
+
+    it("is made a quarter turn in the first attempt that does not work with the angle, before the next attempt asks for smaller gaps", () => {
+      const result = fixLayout(angled, given, tight);
+
+      expect(result.ok).toBe(true);
+      expect(result.attempts).toBe(1);
+      expect(result.poses.map((pose) => pose.rotation_deg)).toEqual([0, 180, 180]);
+      expect(result.adjusted).toContain(0);
+      // With the usual gaps of the first attempt: not the 1 cm of the second, in which the angle would have been kept.
+      expect(isValid(findProblems(angled, result.poses, tight, { gap: 0.03 - 1e-6, wallGap: 0.02 - 1e-6 }))).toBe(true);
+    });
+
+    it("keeps its angle in an attempt in which the layout can be fixed with it: only what is in the way is moved", () => {
+      const roomy: Floor = { width_m: 2.4, length_m: 3.8 };
+
+      // The coffee table is in the sofa, which pushing the two apart fixes, with the sofa at its angle.
+      const result = fixLayout(angled, [at(0, -1, -20), at(0, -0.6, 180), at(-0.8, 1.2, 180)], roomy);
+
+      expect(result.ok).toBe(true);
+      expect(result.attempts).toBe(1);
+      expect(result.poses.map((pose) => pose.rotation_deg)).toEqual([-20, 180, 180]);
+      expect(result.adjusted.length).toBeGreaterThan(0);
+    });
+
+    it("is left at its angle when the angle works, and the layout is fine in the first attempt", () => {
+      // The same sofa in a room as wide as the old one but twice as long, with the others out of its way.
+      const roomy: Floor = { width_m: 2.4, length_m: 3.8 };
+
+      const result = fixLayout(angled, [at(0, -1, -20), at(0.3, 0.9, 180), at(-0.8, 1.2, 180)], roomy);
+
+      expect(result.attempts).toBe(0);
+      expect(result.poses[0].rotation_deg).toBe(-20);
+    });
   });
 });

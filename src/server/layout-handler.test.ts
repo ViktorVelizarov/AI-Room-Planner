@@ -5,6 +5,7 @@ import type { ApiFailure, LayoutsResponse, StyleFailure } from "../shared/api";
 import { typicalItem, type FurnitureItem } from "../shared/furniture";
 import { MAX_LAYOUT_PIECES, type Pose } from "../shared/layout";
 import { LAYOUT_STYLES, STYLE_IDEAS, type LayoutStyle } from "../shared/layout-styles";
+import { CROWDED_FINE, CROWDED_MIRRORED, CROWDED_UNFIXABLE, crowdedAnswer, crowdedRoom } from "../test/crowded-room";
 import { createLayoutHandler } from "./layout-handler";
 
 // Four small tables in a big room, so that layouts of them cannot overlap and what is tested is the handler.
@@ -298,6 +299,43 @@ describe("POST /api/layout", () => {
       expect(results[1].ok === false && results[1].message).toBe("The Cosy layout was too much like the others: only 0 of 1 pieces were in a different place, and at least 1 is needed.");
     });
 
+    it("does not show a layout that cannot be fixed (US-22 AC3): the style has a message for the user, with the attempts that were made, and no layout, and the other two are as they were made", async () => {
+      // A crowded bedroom, in which the second answer is nearly an arrangement but cannot be fixed.
+      const model = fakeModel({ spacious: [crowdedAnswer(CROWDED_FINE, "Open.")], cosy: [crowdedAnswer(CROWDED_UNFIXABLE, "Snug.")], work: [crowdedAnswer(CROWDED_MIRRORED, "Busy.")] });
+
+      const res = await handlerFor(model)(requestWith({ description: crowdedRoom }));
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as LayoutsResponse;
+      expect(body.results.map((result) => result.ok)).toEqual([true, false, true]);
+      expect(body.results[1]).toEqual({
+        style: "cosy",
+        ok: false,
+        name: "Cosy",
+        code: "layout_has_overlaps",
+        message: "The Cosy layout still had furniture overlapping, or sticking out of the room, after 3 attempts to fix it, so it is not shown. Try again, or check the size of the room and of the furniture.",
+      } satisfies StyleFailure);
+      expect(body.results[0]).toMatchObject({ ok: true, poses: CROWDED_FINE, adjusted: [] });
+      expect(body.results[2]).toMatchObject({ ok: true, poses: CROWDED_MIRRORED, adjusted: [] });
+      // Nothing of the layout that failed is sent: no places, and not what the AI said about it either.
+      expect(JSON.stringify(body.results[1])).not.toContain("poses");
+      expect(JSON.stringify(body.results[1])).not.toContain("Snug.");
+      expect(body.calls).toEqual({ used: 3, limit: 10 });
+      expect(model.generate).toHaveBeenCalledTimes(3);
+    });
+
+    it("writes the problems that were left in the log, with the attempts, and not in the answer to the browser", async () => {
+      const model = fakeModel({ spacious: [crowdedAnswer(CROWDED_FINE)], cosy: [crowdedAnswer(CROWDED_UNFIXABLE)], work: [crowdedAnswer(CROWDED_MIRRORED)] });
+
+      const res = await handlerFor(model)(requestWith({ description: crowdedRoom }));
+
+      expect(console.error).toHaveBeenCalledWith(
+        "[layout] cosy: pieces still overlap after 3 attempts to fix them:",
+        expect.arrayContaining([expect.stringMatching(/\(item \d\) (overlaps|sticks out)/)]),
+      );
+      expect(await res.text()).not.toMatch(/\(item \d\)/);
+    });
+
     it("tells the style that ran into the limit of calls that the session is used up, and gives the layouts that were made", async () => {
       const model = threeFine();
 
@@ -342,12 +380,28 @@ describe("POST /api/layout", () => {
       expect(await failure(res)).toEqual({
         error: {
           code: "layout_has_overlaps",
-          message: "The layout that the AI made still had furniture overlapping after the app tried to fix it. Please try again, or check the size of the room and of the furniture.",
+          message:
+            "The layouts that the AI made still had furniture overlapping, or sticking out of the room, after 3 attempts to fix each of them, so none is shown. Please try again, or check the size of the room and of the furniture.",
         },
         calls: { used: 3, limit: 10 },
       });
       expect(model.generate).toHaveBeenCalledTimes(3); // a layout that is not fine is not asked for again
-      expect(console.error).toHaveBeenCalledWith("[layout] spacious: pieces still overlap after fixing:", expect.arrayContaining([expect.stringContaining("Bookshelf (item")]));
+      expect(console.error).toHaveBeenCalledWith("[layout] spacious: pieces still overlap after 3 attempts to fix them:", expect.arrayContaining([expect.stringContaining("Bookshelf (item")]));
+    });
+
+    it("names the style, as its card does, when the one style that was asked for cannot be fixed, and counts the call", async () => {
+      const model = fakeModel({ cosy: [crowdedAnswer(CROWDED_UNFIXABLE)] });
+
+      const res = await handlerFor(model)(requestWith({ description: crowdedRoom, styles: ["cosy"], existing: [{ style: "spacious", poses: CROWDED_FINE }] }));
+
+      expect(res.status).toBe(502);
+      expect(await failure(res)).toEqual({
+        error: {
+          code: "layout_has_overlaps",
+          message: "The Cosy layout still had furniture overlapping, or sticking out of the room, after 3 attempts to fix it, so it is not shown. Try again, or check the size of the room and of the furniture.",
+        },
+        calls: { used: 1, limit: 10 },
+      });
     });
 
     it("is a 503 that hides the provider's error from the user, when every call failed, but still counts the calls", async () => {

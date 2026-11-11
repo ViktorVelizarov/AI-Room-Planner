@@ -496,6 +496,23 @@ describe("LayoutGenerator", () => {
       expect(card("cosy").getByRole("button", { name: "Try again" })).toBeTruthy();
     });
 
+    it("says that a layout that could not be fixed is not shown, as the server says it, with a button to try again and nothing of the layout (US-22 AC3)", async () => {
+      const message =
+        "The Cosy layout still had furniture overlapping, or sticking out of the room, after 3 attempts to fix it, so it is not shown. Try again, or check the size of the room and of the furniture.";
+      request.mockResolvedValue(twoAndAFailure("layout_has_overlaps", message));
+      const { user, button } = setup();
+
+      await user.click(button());
+
+      expect(await card("cosy").findByText(message)).toBeTruthy();
+      expect(card("cosy").getByRole("button", { name: "Try again" })).toBeTruthy();
+      expect(card("cosy").queryByRole("table")).toBeNull();
+      expect(card("cosy").queryByRole("button", { name: "Show in the 3D room" })).toBeNull();
+      // The other two are there to choose from, and the first of them is what the 3D room shows.
+      expect(card("spacious").getByRole("button", { name: "Show in the 3D room" }).getAttribute("aria-pressed")).toBe("true");
+      expect(card("work").getByRole("button", { name: "Show in the 3D room" }).getAttribute("aria-pressed")).toBe("false");
+    });
+
     it("says that the AI took too long, for a style that ran out of time, and offers to try again", async () => {
       const message = "The AI took too long to make the Cosy layout. Please try again.";
       request.mockResolvedValue(twoAndAFailure("timed_out", message));

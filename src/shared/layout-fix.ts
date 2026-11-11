@@ -7,8 +7,9 @@ import type { RoomSize } from "./room";
  * Checking a layout, and fixing what is wrong with it in code. This is the way chosen in the
  * overlap research (docs/overlap-avoidance.md): the footprints of the pieces are checked, and what
  * the check finds is fixed first by pushing the pieces that overlap apart (`repair`) and then, for
- * any that are still wrong, by looking for the nearest free place (`placeNearest`). Only the last
- * resort of `fixLayout` turns a piece, and no piece is added or taken away.
+ * any that are still wrong, by looking for the nearest free place (`placeNearest`). `fixLayout` does
+ * that in three attempts (US-22), and gives up when they have run out. It only turns a piece, to the
+ * nearest quarter turn, when the turn the piece has does not work, and no piece is added or taken away.
  */
 
 /** What a layout needs to know about a piece of the list: what it is and how big. */
@@ -206,17 +207,27 @@ export type FixResult = {
   poses: Pose[];
   /** The pieces that were moved or turned, by their places in the list. */
   adjusted: number[];
+  /**
+   * How many attempts it took: 0 for a layout that was fine as it was given, the number of the attempt
+   * that made it fine (from 1), or `FIX_ATTEMPTS` when it could not be made fine, which is when the
+   * attempts ran out (US-22 AC3).
+   */
+  attempts: number;
 };
 
 /**
- * The gaps that are aimed for, from the most to nothing: a room that is too full for 3 cm between
- * pieces may still hold them with pieces that touch, and a layout is fine when nothing overlaps.
+ * What each attempt to fix a layout aims for, from the most to nothing: a room that is too full for
+ * 3 cm between pieces may still hold them with 1 cm, or with pieces that touch, and a layout is fine
+ * when nothing overlaps. Every attempt is a repair followed by a search, from the layout as it was given.
  */
-const GAPS = [
+const ATTEMPT_GAPS = [
   { gap: FIX_PIECE_GAP_M, wallGap: FIX_WALL_GAP_M },
   { gap: 0.01, wallGap: 0 },
   { gap: 0, wallGap: 0 },
-];
+] as const;
+
+/** How many attempts are made to fix a layout, one after the other, before it is given up (US-22 AC3). */
+export const FIX_ATTEMPTS = ATTEMPT_GAPS.length;
 
 const countProblems = (problems: Problems) => problems.overlaps.length + problems.outside.length;
 
@@ -225,29 +236,34 @@ const squared = (poses: readonly Pose[]): Pose[] =>
   poses.map((pose) => ({ ...pose, rotation_deg: normaliseRotation(Math.round(pose.rotation_deg / 90) * 90) }));
 
 /**
- * Makes a layout fine, if it can be made so. A layout that is fine already is left exactly as it is.
- * Otherwise it is repaired, and what repair leaves wrong goes to the search for free places, aiming
- * for gaps of 3 cm to pieces and 2 cm to walls, and for smaller gaps, down to none, if the room is
- * too full for those. A piece that is at an angle may not fit a tight room, so if all that does
- * not make the layout fine, it is tried again with every turn made the nearest quarter turn, which
- * is the one thing here that turns a piece. If nothing makes it fine, the result is the attempt
- * with the fewest problems.
+ * Makes a layout fine, if it can be made so, in at most `FIX_ATTEMPTS` (3) attempts. A layout that is
+ * fine already is left exactly as it is, with no attempt made. Otherwise the first attempt repairs it,
+ * and what repair leaves wrong goes to the search for free places, aiming for gaps of 3 cm to pieces
+ * and 2 cm to walls. If that does not make it fine the second aims for 1 cm and none, and the third
+ * for pieces that touch, which a room that is too full may need. A piece at an angle takes more room
+ * than one at a quarter turn, so an attempt that fails with the turns as they were given is made once
+ * more with every turn made the nearest quarter turn, before the next attempt asks for smaller gaps:
+ * that is the one thing here that turns a piece, and it is only done in an attempt in which the turns
+ * as they were given did not work. The first attempt that makes the layout fine is the one that is
+ * used. If none does, the result is not fine, and is the try with the fewest problems, which is not
+ * to be shown.
  */
 export function fixLayout(pieces: readonly Piece[], poses: readonly Pose[], room: Floor): FixResult {
   const given = poses.map((pose) => ({ ...pose }));
-  if (isValid(findProblems(pieces, given, room))) return { ok: true, poses: given, adjusted: [] };
+  if (isValid(findProblems(pieces, given, room))) return { ok: true, poses: given, adjusted: [], attempts: 0 };
 
   let best: { result: Pose[]; problems: number } | null = null;
   const starts = [given];
   if (squared(given).some((pose, index) => pose.rotation_deg !== given[index].rotation_deg)) starts.push(squared(given));
-  for (const start of starts) {
-    for (const gaps of GAPS) {
+  for (let attempt = 1; attempt <= FIX_ATTEMPTS; attempt++) {
+    const gaps = ATTEMPT_GAPS[attempt - 1];
+    for (const start of starts) {
       const repaired = repair(pieces, start, room, gaps).poses;
       const result = isValid(findProblems(pieces, repaired, room)) ? repaired : placeNearest(pieces, repaired, room, gaps).poses;
       const problems = countProblems(findProblems(pieces, result, room));
-      if (problems === 0) return { ok: true, poses: result, adjusted: adjustedPieces(given, result) };
+      if (problems === 0) return { ok: true, poses: result, adjusted: adjustedPieces(given, result), attempts: attempt };
       if (!best || problems < best.problems) best = { result, problems };
     }
   }
-  return { ok: false, poses: best!.result, adjusted: adjustedPieces(given, best!.result) };
+  return { ok: false, poses: best!.result, adjusted: adjustedPieces(given, best!.result), attempts: FIX_ATTEMPTS };
 }

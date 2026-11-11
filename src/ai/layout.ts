@@ -1,5 +1,5 @@
 import { whyNoLayoutIsPossible, type Pose } from "../shared/layout";
-import { describeProblems, findProblems, fixLayout } from "../shared/layout-fix";
+import { FIX_ATTEMPTS, describeProblems, findProblems, fixLayout } from "../shared/layout-fix";
 import type { RoomDescription } from "../shared/room-description";
 import { generateLayoutWithGemini } from "./gemini";
 import { parseLayoutAnswer } from "./layout-schema";
@@ -32,13 +32,17 @@ export class RoomTooFullError extends Error {
   }
 }
 
-/** The layout was a layout, but pieces still overlapped or went through a wall after the app tried to fix it. */
+/**
+ * The layout was a layout, but pieces still overlapped or went through a wall after the app made all
+ * the attempts it makes to fix it (`FIX_ATTEMPTS`, US-22 AC3). The layout is not used, and the model is
+ * not asked again.
+ */
 export class LayoutOverlapError extends Error {
-  /** What is wrong, as sentences. */
+  /** What is wrong with the layout as far as it could be fixed, as sentences. */
   readonly problems: string[];
 
   constructor(problems: string[]) {
-    super(`The layout still has problems after fixing: ${problems.join(" ")}`);
+    super(`The layout still has problems after ${FIX_ATTEMPTS} attempts to fix it: ${problems.join(" ")}`);
     this.name = "LayoutOverlapError";
     this.problems = problems;
   }
@@ -47,8 +51,8 @@ export class LayoutOverlapError extends Error {
 /**
  * Makes a layout that has the right shape into one that is fine, which is what the overlap research
  * decided: a layout without overlaps or pieces through walls is used as it is, and any other is
- * fixed in code, by pushing pieces apart and then looking for free places. It throws a
- * LayoutOverlapError when it cannot be fixed.
+ * fixed in code, in up to three attempts (`fixLayout`), by pushing pieces apart and then looking for
+ * free places. It throws a LayoutOverlapError when the attempts have run out.
  */
 export function finishLayout(description: RoomDescription, poses: Pose[]): { poses: Pose[]; adjusted: number[] } {
   const fixed = fixLayout(description.furniture, poses, description.room);
@@ -65,7 +69,8 @@ export function finishLayout(description: RoomDescription, poses: Pose[]): { pos
  * order of the list. The answer is checked to have every piece once and nothing else; if it does not,
  * the model is asked once more, and told what was wrong. If the second answer is also not usable it
  * throws a LayoutError rather than returning broken data. An answer that is a layout but has pieces
- * in each other or through a wall is fixed in code, and not asked for again. A room that cannot hold
+ * in each other or through a wall is fixed in code, in up to three attempts, and not asked for again:
+ * if they run out it throws a LayoutOverlapError, and the layout is not used. A room that cannot hold
  * the pieces is refused before the model is asked. Errors from the call itself (network, bad key)
  * are not retried. With a style in `options` the layout is asked for in that style, and the result
  * has the model's description of it (when the answer had a usable one).

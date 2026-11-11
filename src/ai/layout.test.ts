@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { typicalItem, type FurnitureItem } from "../shared/furniture";
 import type { Pose } from "../shared/layout";
-import { describeProblems, findProblems, fixLayout, isValid } from "../shared/layout-fix";
+import { FIX_ATTEMPTS, describeProblems, findProblems, fixLayout, isValid } from "../shared/layout-fix";
+import { CROWDED_FINE, CROWDED_UNFIXABLE, crowdedAnswer, crowdedRoom } from "../test/crowded-room";
 import { MissingApiKeyError, generateLayoutWithGemini, layoutRequestParts } from "./gemini";
 import { LayoutError, LayoutOverlapError, MAX_LAYOUT_ATTEMPTS, RoomTooFullError, finishLayout, generateLayout } from "./layout";
 import type { GenerateLayoutFn, ModelAnswer } from "./types";
@@ -92,6 +93,38 @@ describe("generateLayout", () => {
       expect(result.adjusted).toEqual([0, 1, 2]);
       expect(result.poses[3]).toEqual(flawed[3]);
       expect(result.poses.map((pose) => pose.rotation_deg)).toEqual(flawed.map((pose) => pose.rotation_deg));
+    });
+  });
+
+  describe("a layout that cannot be fixed (US-22 AC3)", () => {
+    it("is not used: it throws a LayoutOverlapError, which says what is wrong and that the attempts to fix it were made", async () => {
+      const generate = vi.fn<GenerateLayoutFn>().mockResolvedValue(crowdedAnswer(CROWDED_UNFIXABLE));
+
+      const error = await generateLayout(crowdedRoom, generate).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(LayoutOverlapError);
+      const overlap = error as LayoutOverlapError;
+      expect(overlap.problems.length).toBeGreaterThan(0);
+      expect(overlap.problems.every((problem) => /\(item \d\)/.test(problem))).toBe(true);
+      expect(overlap.message).toBe(`The layout still has problems after ${FIX_ATTEMPTS} attempts to fix it: ${overlap.problems.join(" ")}`);
+      expect(overlap.message).toContain("after 3 attempts to fix it");
+    });
+
+    it("is not asked for again: the attempts are to fix it, in code, and the model is asked once, which is one paid call", async () => {
+      const generate = vi.fn<GenerateLayoutFn>().mockResolvedValue(crowdedAnswer(CROWDED_UNFIXABLE));
+
+      await generateLayout(crowdedRoom, generate).catch(() => {});
+
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it("is the answer that is at fault and not the room: a fine arrangement of the same room is used as it is", async () => {
+      const generate = vi.fn<GenerateLayoutFn>().mockResolvedValue(crowdedAnswer(CROWDED_FINE));
+
+      const result = await generateLayout(crowdedRoom, generate);
+
+      expect(result.poses).toEqual(CROWDED_FINE);
+      expect(result.adjusted).toEqual([]);
     });
   });
 
@@ -232,6 +265,7 @@ describe("finishLayout: a layout that has the right shape made fine", () => {
     expect(overlap.problems.length).toBeGreaterThan(0);
     expect(overlap.problems[0]).toMatch(/\(item \d\)/);
     expect(overlap.message).toContain(overlap.problems[0]);
+    expect(overlap.message).toContain("after 3 attempts to fix it");
   });
 
   it("says what is wrong with the layout as far as it could be fixed, not as it was given", () => {
