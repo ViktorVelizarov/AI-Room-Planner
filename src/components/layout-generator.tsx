@@ -15,14 +15,24 @@ const NOTE = "rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-am
 
 /**
  * Asks the AI for a new arrangement of the furniture in the room, and lists where each piece goes.
- * A layout that fails, or has not been asked for yet, changes nothing: the layout that was there stays.
- * Its parent makes a new one when the room or the furniture changes in a way that a layout depends
- * on (`layoutKey`), so a layout is never shown for furniture that is not the furniture it was made for.
+ * The layout belongs to the parent, which also shows it in the 3D room: `onLayout` is called with
+ * each one that is made, and `layout` is the last one made, which stays on the page while a new one
+ * is asked for, or when that fails. A layout that fails, or has not been asked for yet, changes
+ * nothing. The parent starts over, with no layout and a new copy of this, when the room or the
+ * furniture changes in a way that a layout depends on (`layoutKey`), so a layout is never shown for
+ * furniture that is not the furniture it was made for, and an answer still on its way is lost with
+ * the old copy.
  */
-export function LayoutGenerator({ description }: { description: RoomDescription }) {
+export function LayoutGenerator({
+  description,
+  layout,
+  onLayout,
+}: {
+  description: RoomDescription;
+  layout: LayoutResponse | null;
+  onLayout: (layout: LayoutResponse) => void;
+}) {
   const [state, setState] = useState<State>({ status: "idle" });
-  // The layout that was last made, which stays on the page while a new one is asked for, or when that fails.
-  const [layout, setLayout] = useState<LayoutResponse | null>(null);
   const [calls, setCalls] = useState<Calls | null>(null);
 
   const loading = state.status === "loading";
@@ -35,7 +45,7 @@ export function LayoutGenerator({ description }: { description: RoomDescription 
     const outcome = await requestLayout(description);
     if (outcome.ok) {
       setCalls(outcome.data.calls);
-      setLayout(outcome.data);
+      onLayout(outcome.data);
       setState({ status: "idle" });
     } else {
       if (outcome.failure.calls) setCalls(outcome.failure.calls);
@@ -154,7 +164,7 @@ function SuggestedLayout({ description, layout }: { description: RoomDescription
         A position is the middle of the piece, in metres from the middle of the room: x towards the right wall and z
         towards the front wall, which is the side you look at the room from.
       </p>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">The 3D room above does not show this layout yet: it still shows your furniture in a row.</p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">The 3D room above shows this layout: look around it to judge how the furniture stands.</p>
     </div>
   );
 }

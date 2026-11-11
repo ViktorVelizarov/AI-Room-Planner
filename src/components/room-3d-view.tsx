@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { FURNITURE_NAMES } from "../shared/furniture";
+import type { Pose } from "../shared/layout";
 import { formatMetres } from "../shared/room";
 import type { RoomDescription } from "../shared/room-description";
 import { arrangeInRows, createRoomViewer, type CameraMove, type RoomViewer, type UnmatchedPiece } from "../viewer";
@@ -43,12 +44,14 @@ function describeUnmatched(unmatched: UnmatchedPiece[]): string {
 }
 
 /**
- * The room in 3D, in the size of the description, with its furniture lined up in it, which the user
- * can look around with the mouse, the touch screen or the keyboard, and put back to its starting
- * view. A piece with no 3D model is a plain box, and the user is told which. If the browser cannot
- * show 3D, it says so instead.
+ * The room in 3D, in the size of the description, with its furniture in it, which the user can look
+ * around with the mouse, the touch screen or the keyboard, and put back to its starting view. The
+ * furniture is where `layout` puts it, each piece at its place and facing its way, if there is a
+ * layout for this list of furniture (one pose for each piece, in the order of the list); otherwise
+ * it is lined up along the back wall. A piece with no 3D model is a plain box, and the user is told
+ * which. If the browser cannot show 3D, it says so instead.
  */
-export function Room3DView({ description }: { description: RoomDescription }) {
+export function Room3DView({ description, layout }: { description: RoomDescription; layout?: readonly Pose[] | null }) {
   const viewer = useRef<RoomViewer | null>(null);
   const [failed, setFailed] = useState(false);
   // What was shown for one list of furniture. A result for another list is out of date, and then the furniture is loading.
@@ -56,6 +59,9 @@ export function Room3DView({ description }: { description: RoomDescription }) {
   const hintId = useId();
   const { room, furniture } = description;
   const { width_m, length_m, height_m } = room;
+  // A layout is for the list it was made for, and the page drops it when the types or sizes in that list change.
+  // One with another number of poses than pieces would leave a piece without a place, so it is not used.
+  const poses = layout && layout.length === furniture.length ? layout : null;
 
   // The viewer lives as long as the element it draws in: React calls this when the element is put
   // on the page and runs what it returns when the element goes, or when the room size changes.
@@ -78,12 +84,13 @@ export function Room3DView({ description }: { description: RoomDescription }) {
   );
 
   // The furniture goes into the viewer that the line above made, which is why this runs after it,
-  // and again whenever that viewer is made again for another room size.
+  // and again whenever that viewer is made again for another room size, and when a layout comes or
+  // another one replaces it. The furniture of the old arrangement stays in the room until the new one is ready.
   useEffect(() => {
     const current = viewer.current;
     if (!current) return;
     let cancelled = false;
-    const places = arrangeInRows({ width_m, length_m, height_m }, furniture);
+    const places = poses ?? arrangeInRows({ width_m, length_m, height_m }, furniture);
     current.showFurniture(furniture.map((item, index) => ({ item, placement: places[index] }))).then((report) => {
       // A report of null means that other furniture was asked for since, or the viewer has gone.
       if (!cancelled && report) setShown({ furniture, unmatched: report.unmatched });
@@ -91,7 +98,7 @@ export function Room3DView({ description }: { description: RoomDescription }) {
     return () => {
       cancelled = true;
     };
-  }, [width_m, length_m, height_m, furniture]);
+  }, [width_m, length_m, height_m, furniture, poses]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const move = moveForKey(event);
@@ -125,7 +132,7 @@ export function Room3DView({ description }: { description: RoomDescription }) {
       <div
         ref={mount}
         role="group"
-        aria-label={`3D view of the room: ${width} m wide, ${length} m long, ${height} m high, with ${pieces(furniture.length)} of furniture`}
+        aria-label={`3D view of the room: ${width} m wide, ${length} m long, ${height} m high, with ${pieces(furniture.length)} of furniture${poses ? " in the suggested layout" : ""}`}
         aria-describedby={hintId}
         tabIndex={0}
         onKeyDown={handleKeyDown}

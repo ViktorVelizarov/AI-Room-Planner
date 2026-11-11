@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LayoutFailure, LayoutOutcome } from "../client/layout-client";
 import { requestLayout } from "../client/layout-client";
+import type { LayoutResponse } from "../shared/api";
 import { typicalItem, type FurnitureItem } from "../shared/furniture";
 import type { Pose } from "../shared/layout";
+import type { RoomDescription } from "../shared/room-description";
 import { LayoutGenerator } from "./layout-generator";
 
 vi.mock("../client/layout-client", () => ({ requestLayout: vi.fn() }));
@@ -49,8 +52,25 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const setup = (shown = description) => {
-  render(<LayoutGenerator description={shown} />);
+/** What the 3D room step is to the generator: it holds the layout, and is told of each one that is made. */
+const reported: LayoutResponse[] = [];
+function Holder({ shown, first = null }: { shown: RoomDescription; first?: LayoutResponse | null }) {
+  const [layout, setLayout] = useState<LayoutResponse | null>(first);
+  return (
+    <LayoutGenerator
+      description={shown}
+      layout={layout}
+      onLayout={(made) => {
+        reported.push(made);
+        setLayout(made);
+      }}
+    />
+  );
+}
+
+const setup = (shown = description, first: LayoutResponse | null = null) => {
+  reported.length = 0;
+  render(<Holder shown={shown} first={first} />);
   const user = userEvent.setup();
   const button = () => screen.getByRole("button", { name: /Generate layout|Generating/ }) as HTMLButtonElement;
   return { user, button };
@@ -340,13 +360,90 @@ describe("LayoutGenerator", () => {
     expect(within(table).getAllByRole("rowheader")).toHaveLength(3);
   });
 
-  it("says that the 3D room does not show the layout yet, so that nobody looks for it there", async () => {
+  it("says that the 3D room above shows the layout, so that nobody has to look for it, and says nothing of the kind before there is one (US-20)", async () => {
     request.mockResolvedValue(success());
     const { user, button } = setup();
 
-    expect(screen.queryByText(/does not show this layout yet/)).toBeNull();
+    expect(screen.queryByText(/The 3D room above shows this layout/)).toBeNull();
     await user.click(button());
 
-    expect(await screen.findByText("The 3D room above does not show this layout yet: it still shows your furniture in a row.")).toBeTruthy();
+    expect(await screen.findByText("The 3D room above shows this layout: look around it to judge how the furniture stands.")).toBeTruthy();
+    expect(screen.queryByText(/does not show this layout yet|still shows your furniture in a row/)).toBeNull();
+  });
+});
+
+describe("LayoutGenerator: the layout belongs to its parent (US-20)", () => {
+  it("tells its parent about every layout that is made, with the poses, the pieces that were moved and the calls, so that the 3D room can show it", async () => {
+    const other: Pose[] = [
+      { x_m: 1, z_m: 1, rotation_deg: 0 },
+      { x_m: 2, z_m: 2, rotation_deg: 90 },
+      { x_m: 3, z_m: -1, rotation_deg: 180 },
+    ];
+    request.mockResolvedValueOnce(success(poses, [1], { used: 1, limit: 10 })).mockResolvedValueOnce(success(other, [], { used: 2, limit: 10 }));
+    const { user, button } = setup();
+    expect(reported).toEqual([]);
+
+    await user.click(button());
+    await screen.findByRole("table");
+    await user.click(button());
+    await screen.findByText("AI calls used this session: 2 of 10");
+
+    expect(reported).toEqual([
+      { layout: poses, adjusted: [1], calls: { used: 1, limit: 10 } },
+      { layout: other, adjusted: [], calls: { used: 2, limit: 10 } },
+    ]);
+  });
+
+  it("does not tell its parent anything when the layout cannot be made, so that the layout and the 3D room that were there stay", async () => {
+    request.mockResolvedValue(failure());
+    const { user, button } = setup();
+
+    await user.click(button());
+
+    await screen.findByRole("alert");
+    expect(reported).toEqual([]);
+  });
+
+  it("does not tell its parent while a layout is still being made", async () => {
+    request.mockReturnValue(deferred<LayoutOutcome>().promise);
+    const { user, button } = setup();
+
+    await user.click(button());
+
+    expect(reported).toEqual([]);
+  });
+
+  it("shows the layout that its parent gives it, as soon as it is there, and the count of calls only once it has made one itself", () => {
+    setup(description, { layout: poses, adjusted: [2], calls: { used: 4, limit: 10 } });
+
+    expect(rows()).toEqual([
+      "Sofa (item 1)x 0.00, z 1.45the back wall",
+      "Coffee table (item 2)x -0.50, z 0.35the front wall",
+      "TV stand (item 3)x 0.00, z -1.80the front wall",
+    ]);
+    expect(screen.getByText(/1 piece was adjusted a little by the app/)).toBeTruthy();
+    expect(screen.getByText(/The 3D room above shows this layout/)).toBeTruthy();
+    expect(screen.queryByText(/AI calls used this session/)).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing about a layout when its parent has none", () => {
+    setup();
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText(/The 3D room above shows this layout/)).toBeNull();
+  });
+
+  it("goes on showing the layout its parent holds when asking for another fails, and asks again from it", async () => {
+    request.mockResolvedValueOnce(failure({ message: "The AI could not make a usable layout this time. Please try again." })).mockResolvedValueOnce(success());
+    const { user } = setup(description, { layout: poses, adjusted: [], calls: { used: 1, limit: 10 } });
+
+    await user.click(screen.getByRole("button", { name: "Generate layout" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(rows()).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("AI calls used this session: 1 of 10");
+    expect(reported).toHaveLength(1);
   });
 });

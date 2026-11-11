@@ -2,11 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Box3, BoxGeometry, Group, Mesh, MeshLambertMaterial, MeshStandardMaterial, PlaneGeometry, Vector3, type Material, type Object3D } from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { footprintCorners, type Point } from "../shared/footprint";
 import { FURNITURE_LABELS, TYPICAL_ITEMS, typicalItem, type FurnitureItem, type FurnitureLabel } from "../shared/furniture";
+import { describeFacing, footprintOf, type Pose } from "../shared/layout";
 import { resolveColour } from "./colour";
 import { MODEL_FOLDER, loadFurnitureModel } from "./furniture-library";
 import { MODEL_TIMEOUT_MS, buildFurniture, type ModelLoader, type PlacedPiece } from "./furniture-scene";
-import { disposeObject } from "./room-scene";
+import { createRoomScene, disposeObject } from "./room-scene";
 
 const folder = join(process.cwd(), "public", "models");
 
@@ -251,6 +253,199 @@ describe("buildFurniture: the colour and material of each piece (US-17)", () => 
     const { group } = await buildFurniture([placed({ ...sofa, color: "red" })], realModels);
 
     expect(group.children[0].userData).toEqual({ index: 0, type: "sofa" });
+  });
+});
+
+/** A piece of furniture put at a pose, as a layout puts it. */
+const posed = (item: FurnitureItem, pose: Pose): PlacedPiece => ({ item, placement: pose });
+
+/** Turns that the AI may give, in degrees: the four quarter turns, angles between, a negative one, and ones past a full turn. */
+const TURNS = [0, 90, 180, 270, 45, 135, 200, -30, 360, 725];
+
+/** Where the four corners of a piece's footprint are in the room: the corners of the box round the model as it came, taken where the piece took them. */
+function cornersOfPlaced(piece: Object3D, native: Box3): Point[] {
+  // Its parents too: the box of a piece with no model is a part of the group that is placed.
+  piece.updateWorldMatrix(true, true);
+  return [native.min.x, native.max.x].flatMap((x) =>
+    [native.min.z, native.max.z].map((z) => {
+      const corner = new Vector3(x, 0, z).applyMatrix4(piece.matrixWorld);
+      return { x: corner.x, z: corner.z };
+    }),
+  );
+}
+
+/** Each of the corners that are wanted is one of the corners that there are. */
+function expectSameCorners(actual: Point[], wanted: Point[], message: string) {
+  expect(actual).toHaveLength(4);
+  for (const want of wanted) {
+    const found = actual.some((corner) => Math.hypot(corner.x - want.x, corner.z - want.z) < 1e-6);
+    expect(found, `${message}: no corner at x ${want.x.toFixed(4)}, z ${want.z.toFixed(4)}`).toBe(true);
+  }
+}
+
+/** Every vertex of a piece, where it is in the room, with the name of its material. */
+function worldVertices(root: Object3D) {
+  root.updateWorldMatrix(true, true);
+  const found: { point: Vector3; material: string }[] = [];
+  root.traverse((part) => {
+    if (!(part instanceof Mesh)) return;
+    const positions = part.geometry.getAttribute("position");
+    const material = Array.isArray(part.material) ? part.material[0] : part.material;
+    for (let i = 0; i < positions.count; i++) {
+      found.push({ point: new Vector3().fromBufferAttribute(positions, i).applyMatrix4(part.matrixWorld), material: material.name });
+    }
+  });
+  return found;
+}
+
+describe("buildFurniture: a piece turned to face a way (US-20 AC1, AC2)", () => {
+  // A piece with sides that are neither equal to each other nor to the model's own, so that turning it
+  // before or after stretching it would give a different footprint.
+  const resized = (type: FurnitureLabel): FurnitureItem => {
+    const item = typicalItem(type);
+    return { ...item, width_cm: item.width_cm * 1.5, depth_cm: item.depth_cm * 0.8 };
+  };
+
+  it.each(FURNITURE_LABELS)("%s: covers exactly the footprint that its pose has in the overlap check, and stands on the floor, at every turn", async (type) => {
+    const item = resized(type);
+    const native = new Box3().setFromObject((await realModels(type))!);
+
+    for (const turn of TURNS) {
+      const pose: Pose = { x_m: 1.2, z_m: -0.8, rotation_deg: turn };
+      const { group } = await buildFurniture([posed(item, pose)], realModels);
+
+      const piece = group.children[0];
+      expectSameCorners(cornersOfPlaced(piece, native), footprintCorners(footprintOf(item, pose)), `${type} turned ${turn}`);
+      const box = boxOf(piece);
+      expect(box.min.y, `${type} turned ${turn}: its base`).toBeCloseTo(0, 6);
+      expect(box.max.y, `${type} turned ${turn}: its top`).toBeCloseTo(item.height_cm / 100, 6);
+    }
+  });
+
+  it.each([
+    [0, "the front wall", "wall-front"],
+    [90, "the right wall", "wall-right"],
+    [180, "the back wall", "wall-back"],
+    [270, "the left wall", "wall-left"],
+  ])("%i degrees: the front of every piece faces %s, the wall that the page names for it", async (turn, words, wallName) => {
+    const walls = createRoomScene({ width_m: 6, length_m: 4, height_m: 2.5 });
+    const wall = walls.getObjectByName(wallName)!.getWorldPosition(new Vector3());
+    const towardsWall = new Vector3(wall.x, 0, wall.z).normalize();
+    expect(describeFacing(turn)).toBe(words);
+
+    const { group } = await buildFurniture(FURNITURE_LABELS.map((type) => posed(resized(type), { x_m: 0.5, z_m: 0.5, rotation_deg: turn })), realModels);
+
+    group.updateMatrixWorld(true);
+    group.children.forEach((piece, index) => {
+      const front = new Vector3(0, 0, 1).transformDirection(piece.matrixWorld);
+      expect(front.dot(towardsWall), `${FURNITURE_LABELS[index]} faces ${words}`).toBeCloseTo(1, 6);
+    });
+  });
+
+  it("turns the front towards +x for a positive angle, as rotation.y does, whatever the angle", async () => {
+    const { group } = await buildFurniture(TURNS.map((turn) => posed(sofa, { x_m: 0, z_m: 0, rotation_deg: turn })), realModels);
+
+    group.updateMatrixWorld(true);
+    group.children.forEach((piece, index) => {
+      const radians = (TURNS[index] * Math.PI) / 180;
+      const front = new Vector3(0, 0, 1).transformDirection(piece.matrixWorld);
+      expect(front.x, `turned ${TURNS[index]}`).toBeCloseTo(Math.sin(radians), 6);
+      expect(front.y, `turned ${TURNS[index]}`).toBeCloseTo(0, 6);
+      expect(front.z, `turned ${TURNS[index]}`).toBeCloseTo(Math.cos(radians), 6);
+    });
+  });
+
+  // The library tests show which end of each model is its front; here that end has to end up where the pose says.
+  const seats: FurnitureLabel[] = ["sofa", "armchair", "dining_chair", "office_chair", "bed"];
+  const withHandles: FurnitureLabel[] = ["nightstand", "dresser", "desk"];
+  const alongFront = (point: Vector3, pose: Pose) => {
+    const radians = (pose.rotation_deg * Math.PI) / 180;
+    return (point.x - pose.x_m) * Math.sin(radians) + (point.z - pose.z_m) * Math.cos(radians);
+  };
+
+  it.each(seats)("%s: its backrest or headboard is behind the piece and its seat in front of it, as its pose says, at every turn", async (type) => {
+    const item = typicalItem(type);
+    for (const turn of [0, 90, 180, 270, 45, 135, 225, 315]) {
+      const pose: Pose = { x_m: -1, z_m: 1.5, rotation_deg: turn };
+      const { group } = await buildFurniture([posed(item, pose)], realModels);
+
+      const box = boxOf(group.children[0]);
+      const high = worldVertices(group.children[0]).filter(({ point }) => point.y > box.min.y + 0.65 * (box.max.y - box.min.y));
+      const meanAlongFront = high.reduce((sum, { point }) => sum + alongFront(point, pose), 0) / high.length;
+      expect(high.length).toBeGreaterThan(10);
+      expect(meanAlongFront, `${type} turned ${turn}: its high part is ${(meanAlongFront * 100).toFixed(1)} cm along its front`).toBeLessThan(-0.05 * (item.depth_cm / 100));
+    }
+  });
+
+  it.each(withHandles)("%s: its handles are on the front of the piece, as its pose says, at every turn", async (type) => {
+    const item = typicalItem(type);
+    for (const turn of [0, 90, 180, 270, 45, 135, 225, 315]) {
+      const pose: Pose = { x_m: 2, z_m: -1, rotation_deg: turn };
+      const { group } = await buildFurniture([posed(item, pose)], realModels);
+
+      const handles = worldVertices(group.children[0]).filter(({ material }) => material === "metal");
+      const meanAlongFront = handles.reduce((sum, { point }) => sum + alongFront(point, pose), 0) / handles.length;
+      expect(handles.length).toBeGreaterThan(10);
+      expect(meanAlongFront, `${type} turned ${turn}: its handles are ${(meanAlongFront * 100).toFixed(1)} cm along its front`).toBeGreaterThan(0.1 * (item.depth_cm / 100));
+    }
+  });
+
+  it("keeps a piece's width across its front and its depth from front to back, so turning a quarter swaps the sides it covers on x and z", async () => {
+    const wide = { ...sofa, width_cm: 300, depth_cm: 100 };
+
+    const { group } = await buildFurniture([posed(wide, { x_m: 0, z_m: 0, rotation_deg: 0 }), posed(wide, { x_m: 0, z_m: 0, rotation_deg: 90 })], realModels);
+
+    const [straight, turned] = group.children.map((piece) => sizeCm(piece));
+    expect([straight.x, straight.z].map(Math.round)).toEqual([300, 100]);
+    expect([turned.x, turned.z].map(Math.round)).toEqual([100, 300]);
+    expect(turned.y).toBeCloseTo(straight.y, 6);
+  });
+
+  it("faces the front, as the arrangement in rows does, when a placement has no rotation", async () => {
+    const { group } = await buildFurniture([placed(sofa, 1, 2)], realModels);
+
+    group.updateMatrixWorld(true);
+    expect(group.children[0].rotation.y).toBe(0);
+    expect(new Vector3(0, 0, 1).transformDirection(group.children[0].matrixWorld).toArray()).toEqual([0, 0, 1]);
+  });
+
+  it("turns each piece by itself: two pieces of one type facing different ways, and the model they are copied from stays as it was", async () => {
+    const prototype = (await realModels("sofa"))!;
+
+    const { group } = await buildFurniture(
+      [posed(sofa, { x_m: -1, z_m: 0, rotation_deg: 90 }), posed(sofa, { x_m: 1, z_m: 0, rotation_deg: 270 }), posed(sofa, { x_m: 0, z_m: 1, rotation_deg: 0 })],
+      async () => prototype,
+    );
+
+    expect(group.children.map((piece) => Math.round((piece.rotation.y * 180) / Math.PI))).toEqual([90, 270, 0]);
+    expect(prototype.rotation.y).toBe(0);
+    expect(prototype.position.toArray()).toEqual([0, 0, 0]);
+  });
+
+  it("turns a plain box, for a piece that has no model, about its middle in the same way, and keeps it on the floor", async () => {
+    const bed = typicalItem("bed");
+
+    for (const turn of TURNS) {
+      const pose: Pose = { x_m: -0.5, z_m: 1, rotation_deg: turn };
+      const { group } = await buildFurniture([posed(bed, pose)], async () => null);
+
+      const piece = group.children[0];
+      expect(piece.userData.placeholder).toBe(true);
+      const mesh = piece.children.find((part): part is Mesh => part instanceof Mesh)!;
+      const { width, depth } = (mesh.geometry as BoxGeometry).parameters;
+      const corners = cornersOfPlaced(mesh, new Box3(new Vector3(-width / 2, 0, -depth / 2), new Vector3(width / 2, 0, depth / 2)));
+      expectSameCorners(corners, footprintCorners(footprintOf(bed, pose)), `a box for a bed turned ${turn}`);
+      expect(boxOf(piece).min.y, `turned ${turn}`).toBeCloseTo(0, 6);
+    }
+  });
+
+  it("turns the model and the box of a piece the same way, so a piece that could not be loaded stands where it would have stood", async () => {
+    const pose: Pose = { x_m: 0.7, z_m: -0.3, rotation_deg: 60 };
+    const withModel = await buildFurniture([posed(sofa, pose)], realModels);
+    const asBox = await buildFurniture([posed(sofa, pose)], async () => null);
+
+    expect(asBox.group.children[0].rotation.y).toBe(withModel.group.children[0].rotation.y);
+    expect(asBox.group.children[0].position.toArray()).toEqual(withModel.group.children[0].position.toArray());
   });
 });
 

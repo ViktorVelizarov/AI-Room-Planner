@@ -627,6 +627,11 @@ describe("showFurniture", () => {
   // A model of one metre, which stands on the floor, as the library's models do.
   const model = () => new Group().add(new Mesh(new BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new MeshLambertMaterial()));
   const piece = (type: FurnitureLabel, x = 0, z = 0): PlacedPiece => ({ item: typicalItem(type), placement: { x_m: x, z_m: z } });
+  /** A piece with a pose, as a layout gives it: where it stands and which way its front faces. */
+  const posed = (type: FurnitureLabel, x: number, z: number, rotation_deg: number): PlacedPiece => ({
+    item: typicalItem(type),
+    placement: { x_m: x, z_m: z, rotation_deg },
+  });
   const loadsModels = () => vi.fn<ModelLoader>(async () => model());
 
   /** The scene that the viewer draws. It is only known once something has been drawn. */
@@ -718,6 +723,94 @@ describe("showFurniture", () => {
     expect([first, second]).toEqual([null, { count: 1, unmatched: [] }]);
     expect(scene.children.filter((child) => child.name === "furniture")).toHaveLength(1);
     expect(furnitureIn(scene)!.children).toHaveLength(1);
+  });
+
+  describe("a layout: pieces that are turned to face a way (US-20)", () => {
+    const aspect = 600 / 400;
+    const degrees = (radians: number) => Math.round((radians * 180) / Math.PI);
+
+    it("puts each piece where its placement says, facing the way it says, in the room that is drawn", async () => {
+      const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+      const scene = sceneOf(renderer);
+
+      await viewer.showFurniture([posed("sofa", 1, -1, 90), posed("desk", -2, 1.5, 180), piece("bed", 0.5, 0.5)]);
+
+      const pieces = furnitureIn(scene)!.children;
+      expect(pieces.map((one) => one.position.toArray())).toEqual([
+        [1, 0, -1],
+        [-2, 0, 1.5],
+        [0.5, 0, 0.5],
+      ]);
+      expect(pieces.map((one) => degrees(one.rotation.y))).toEqual([90, 180, 0]);
+      // The pieces are drawn the way they stand.
+      flushFrames();
+      expect(renderer.render).toHaveBeenCalledTimes(2);
+    });
+
+    it("puts the pieces of a layout in place of the furniture that stood in rows, and lets the pieces keep their order", async () => {
+      const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+      const scene = sceneOf(renderer);
+      const rows = [piece("sofa", -2, -1.8), piece("desk", 0, -1.8)];
+      const layout = [posed("sofa", 0, 1.2, 180), posed("desk", 2, -1, 270)];
+      await viewer.showFurniture(rows);
+
+      const report = await viewer.showFurniture(layout);
+
+      expect(report).toEqual({ count: 2, unmatched: [] });
+      expect(scene.children.filter((child) => child.name === "furniture")).toHaveLength(1);
+      const pieces = furnitureIn(scene)!.children;
+      expect(pieces.map((one) => [one.userData.type, one.position.x, one.position.z, degrees(one.rotation.y)])).toEqual([
+        ["sofa", 0, 1.2, 180],
+        ["desk", 2, -1, 270],
+      ]);
+    });
+
+    it("does not move a camera that the user has put somewhere when the layout comes in place of the rows", async () => {
+      const { viewer } = open(room, { loadModel: loadsModels() });
+      await viewer.showFurniture([piece("sofa", -2, -1.8), piece("desk", 0, -1.8)]);
+      viewer.move("turn-left");
+      viewer.move("zoom-in");
+      const placed = asArrays(viewer.getView());
+
+      await viewer.showFurniture([posed("sofa", 0, 1.2, 180), posed("desk", 2, -1, 270)]);
+
+      expect(asArrays(viewer.getView())).toEqual(placed);
+    });
+
+    it("keeps the starting view of the empty room when turned pieces are all inside the room, and Reset returns to it", async () => {
+      const { viewer } = open(room, { loadModel: loadsModels() });
+      const roomOnly = asArrays(viewer.getView());
+
+      // A sofa 2 m wide turned a quarter, against the left wall, and a desk turned 45 degrees in a corner.
+      await viewer.showFurniture([posed("sofa", -2.5, 0, 90), posed("desk", 2.2, 1.6, 45)]);
+      expect(asArrays(viewer.getView())).toEqual(roomOnly);
+      viewer.move("turn-left");
+      viewer.resetView();
+
+      expect(asArrays(viewer.getView())).toEqual(roomOnly);
+    });
+
+    it("frames a piece that sticks out of the room by the shape it has once turned, not by the shape it has unturned", async () => {
+      const { viewer, renderer } = open(room, { loadModel: loadsModels() });
+      const scene = sceneOf(renderer);
+      const furnitureBox = () => new Box3().setFromObject(furnitureIn(scene)!);
+      // The room is 6 m wide. A sofa 2 m wide with its middle at x = 4.5 reaches to x = 5.5, far past the right wall,
+      // and the camera has to go back to have it in the frame. Turned a quarter, it is 0.9 m across and reaches only to x = 4.95.
+      await viewer.showFurniture([posed("sofa", 4.5, 0, 0)]);
+      const straight = viewer.getView();
+      expectSameView(straight, defaultView(room, aspect, furnitureBox()));
+      const straightBox = furnitureBox();
+      const roomOnly = defaultView(room, aspect);
+      expect(distanceOf(straight)).toBeGreaterThan(distanceOf(roomOnly) + 0.2);
+
+      viewer.resetView();
+      await viewer.showFurniture([posed("sofa", 4.5, 0, 90)]);
+
+      const turned = viewer.getView();
+      expect(furnitureBox().max.x).toBeCloseTo(straightBox.max.x - 0.55, 6);
+      expectSameView(turned, defaultView(room, aspect, furnitureBox()));
+      expect(distanceOf(turned)).toBeLessThan(distanceOf(straight) - 0.2);
+    });
   });
 
   describe("when some of the furniture sticks out of the room", () => {

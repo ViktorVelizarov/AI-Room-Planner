@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { typicalItem, type FurnitureItem } from "../shared/furniture";
+import type { Pose } from "../shared/layout";
 import type { RoomSize } from "../shared/room";
 import type { RoomDescription } from "../shared/room-description";
 import { arrangeInRows, createRoomViewer, type CameraMove, type FurnitureReport, type RoomViewer } from "../viewer";
@@ -149,6 +150,166 @@ describe("Room3DView: the furniture (AC1)", () => {
 
     expect(screen.getByRole("status").textContent).toBe("");
     expect(screen.queryByText(/plain grey/)).toBeNull();
+  });
+});
+
+describe("Room3DView: a layout (US-20)", () => {
+  // Where a layout puts the sofa and the coffee table: not where the rows would, and turned.
+  const poses: Pose[] = [
+    { x_m: 1, z_m: 0.5, rotation_deg: 180 },
+    { x_m: -2, z_m: -1, rotation_deg: 90 },
+  ];
+  const otherPoses: Pose[] = [
+    { x_m: 0, z_m: 1, rotation_deg: 0 },
+    { x_m: 2, z_m: 1, rotation_deg: 270 },
+  ];
+  const placed = (shown: Pose[]) => [
+    { item: sofa, placement: shown[0] },
+    { item: table, placement: shown[1] },
+  ];
+
+  it("puts each piece where the layout says and facing the way it says, in the order of the list, instead of in rows (AC1)", async () => {
+    await show(<Room3DView description={description} layout={poses} />);
+
+    expect(viewers).toHaveLength(1);
+    // Once, so the pieces are never shown in rows first.
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(1);
+    expect(viewers[0].showFurniture).toHaveBeenCalledWith(placed(poses));
+  });
+
+  it.each([undefined, null])("lines the furniture up in rows when the layout is %s", async (none) => {
+    await show(<Room3DView description={description} layout={none} />);
+
+    const places = arrangeInRows(room, description.furniture);
+    expect(viewers[0].showFurniture).toHaveBeenCalledWith([
+      { item: sofa, placement: places[0] },
+      { item: table, placement: places[1] },
+    ]);
+  });
+
+  it("shows a layout that is made later in the viewer that is there, in place of the rows, and does not say that the furniture is loading", async () => {
+    const { rerender } = await show(<Room3DView description={description} />);
+    const waiting = deferred<FurnitureReport>();
+    answer = () => waiting.promise;
+
+    await act(async () => rerender(<Room3DView description={description} layout={poses} />));
+
+    expect(viewers).toHaveLength(1);
+    expect(viewers[0].dispose).not.toHaveBeenCalled();
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(2);
+    expect(viewers[0].showFurniture).toHaveBeenLastCalledWith(placed(poses));
+    // The rows stay in the room until the layout is ready, so there is nothing that the user needs to wait for.
+    expect(screen.queryByText(LOADING)).toBeNull();
+    await act(async () => waiting.resolve({ count: 2, unmatched: [] }));
+    expect(screen.queryByText(LOADING)).toBeNull();
+  });
+
+  it("shows a new layout in place of the one before, in the same viewer", async () => {
+    const { rerender } = await show(<Room3DView description={description} layout={poses} />);
+
+    await act(async () => rerender(<Room3DView description={description} layout={otherPoses} />));
+
+    expect(viewers).toHaveLength(1);
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(2);
+    expect(viewers[0].showFurniture).toHaveBeenLastCalledWith(placed(otherPoses));
+  });
+
+  it("goes back to the rows when the layout goes", async () => {
+    const { rerender } = await show(<Room3DView description={description} layout={poses} />);
+
+    await act(async () => rerender(<Room3DView description={description} layout={null} />));
+
+    const places = arrangeInRows(room, description.furniture);
+    expect(viewers[0].showFurniture).toHaveBeenLastCalledWith([
+      { item: sofa, placement: places[0] },
+      { item: table, placement: places[1] },
+    ]);
+  });
+
+  it("keeps the viewer, and does not ask for the furniture again, when the same layout comes again", async () => {
+    const { rerender } = await show(<Room3DView description={description} layout={poses} />);
+
+    await act(async () => rerender(<Room3DView description={description} layout={poses} />));
+
+    expect(viewers).toHaveLength(1);
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["fewer", [poses[0]]],
+    ["more", [...poses, poses[0]]],
+  ])("does not use a layout that has %s places than there are pieces, which would leave a piece nowhere or a place without a piece", async (_, wrongLength) => {
+    await show(<Room3DView description={description} layout={wrongLength} />);
+
+    const places = arrangeInRows(room, description.furniture);
+    expect(viewers[0].showFurniture).toHaveBeenCalledWith([
+      { item: sofa, placement: places[0] },
+      { item: table, placement: places[1] },
+    ]);
+    expect(view().getAttribute("aria-label")).not.toContain("suggested layout");
+  });
+
+  it("uses the layout in the viewer that it makes for a new room size, and not only in the one that was stopped", async () => {
+    const { rerender } = await show(<Room3DView description={description} layout={poses} />);
+
+    await act(async () => rerender(<Room3DView description={{ room: { ...room, width_m: 8 }, furniture: description.furniture }} layout={poses} />));
+
+    expect(viewers).toHaveLength(2);
+    expect(viewers[1].showFurniture).toHaveBeenCalledTimes(1);
+    expect(viewers[1].showFurniture).toHaveBeenCalledWith(placed(poses));
+  });
+
+  it("says in the label of the view that the furniture is in the suggested layout, and says nothing about a layout otherwise", async () => {
+    const { rerender } = await show(<Room3DView description={description} />);
+    expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture");
+
+    await act(async () => rerender(<Room3DView description={description} layout={poses} />));
+
+    expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture in the suggested layout");
+  });
+
+  it("still tells which pieces are plain boxes, for the pieces of a layout", async () => {
+    answer = async () => ({ count: 2, unmatched: [{ index: 1, type: "coffee_table", reason: "load-failed" }] });
+
+    await show(<Room3DView description={description} layout={poses} />);
+
+    expect(screen.getByRole("status").textContent).toContain("Coffee table (item 2)");
+  });
+
+  it("ignores what comes in for an arrangement that has been replaced since, however late", async () => {
+    const first = deferred<FurnitureReport>();
+    const second = deferred<FurnitureReport>();
+    const answers = [first.promise, second.promise];
+    answer = () => answers.shift()!;
+    const { rerender } = await show(<Room3DView description={description} />);
+    await act(async () => rerender(<Room3DView description={description} layout={poses} />));
+
+    await act(async () => second.resolve({ count: 2, unmatched: [] }));
+    // The rows were ready last, and say that a piece is a box: that is not what is in the room now.
+    await act(async () => first.resolve({ count: 2, unmatched: [{ index: 0, type: "sofa", reason: "no-model" }] }));
+
+    expect(screen.queryByText(/plain grey/)).toBeNull();
+  });
+
+  it("keeps exactly one viewer alive, with the layout in it, when React runs the effects twice, as it does while developing", async () => {
+    await show(
+      <StrictMode>
+        <Room3DView description={description} layout={poses} />
+      </StrictMode>,
+    );
+
+    const alive = viewers.filter((viewer) => viewer.dispose.mock.calls.length === 0);
+    expect(alive).toHaveLength(1);
+    expect(alive[0].showFurniture).toHaveBeenLastCalledWith(placed(poses));
+    await waitFor(() => expect(screen.queryByText(LOADING)).toBeNull());
+  });
+
+  it("does not change the layout it is given", async () => {
+    const given = Object.freeze(poses.map((pose) => Object.freeze({ ...pose })));
+
+    await show(<Room3DView description={description} layout={given} />);
+
+    expect(given).toEqual(poses);
   });
 });
 

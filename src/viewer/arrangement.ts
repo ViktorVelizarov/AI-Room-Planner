@@ -1,8 +1,15 @@
 import type { FurnitureItem } from "../shared/furniture";
 import type { RoomSize } from "../shared/room";
 
-/** Where a piece stands: the middle of its footprint, in metres from the middle of the floor (x across, z along the length). */
-export type Placement = { x_m: number; z_m: number };
+/**
+ * Where a piece stands and which way it faces. `x_m` and `z_m` are the middle of its footprint, in
+ * metres from the middle of the floor (x across, z along the length). `rotation_deg` is the way its
+ * front faces: 0 towards the front of the room (+z), and a positive angle turns the front towards +x,
+ * as `rotation.y` does in Three.js. It is the rule of the footprint check (`src/shared/footprint.ts`)
+ * and of a layout (`Pose` in `src/shared/layout.ts`), so a layout is a list of placements. A placement
+ * with no rotation faces the front.
+ */
+export type Placement = { x_m: number; z_m: number; rotation_deg?: number };
 
 /** How far a row starts from the walls, and how far pieces are from each other, in metres. */
 export const WALL_GAP_M = 0.1;

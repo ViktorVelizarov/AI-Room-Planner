@@ -1,31 +1,16 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DetectResponse } from "../shared/api";
 import { toEntries, type FurnitureEntry } from "../shared/furniture-list";
 import { layoutKey } from "../shared/layout";
 import type { RoomSize } from "../shared/room";
 import type { RoomDescription } from "../shared/room-description";
-import { LayoutGenerator } from "./layout-generator";
 import { RoomAnalyzer } from "./room-analyzer";
-import { RoomDescriptionView } from "./room-description-view";
+import { Room3DStep } from "./room-3d-step";
 import { RoomSizeForm } from "./room-size-form";
 import { RoomSummary } from "./room-summary";
 import { StepIndicator } from "./step-indicator";
-
-// The 3D code is large, so it is loaded when the user first reaches the 3D room, not with the page.
-const Room3DView = dynamic(() => import("./room-3d-view").then((module) => module.Room3DView), {
-  ssr: false,
-  loading: () => (
-    <p
-      role="status"
-      className="flex h-80 items-center justify-center rounded-lg bg-black/4 text-sm text-zinc-600 sm:h-112 dark:bg-white/6 dark:text-zinc-400"
-    >
-      Loading the 3D view…
-    </p>
-  ),
-});
 
 /**
  * One step of the flow. Steps that are not current are hidden, not removed, so the photos,
@@ -144,41 +129,14 @@ export function RoomPlanner() {
       </Step>
 
       <Step active={step === ROOM_3D} label="3D room">
+        {/* Made again, with no layout, when what a layout depends on changes: the types and sizes of the furniture, or the floor of the room. */}
         {description && (
-          <section
-            aria-labelledby="room-3d-heading"
-            className="flex flex-col gap-5 rounded-2xl border border-black/10 p-6 dark:border-white/15"
-          >
-            <div>
-              <h2 id="room-3d-heading" className="text-lg font-semibold">
-                3D room
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Your room at the size you entered, with your furniture lined up along the back wall
-                in the order of your list. Each piece takes the colour and material found for it;
-                where there is none, the model keeps its own look. Look around it to check that the
-                room and the furniture match the real ones.
-              </p>
-            </div>
-
-            {/* Only while this step is open, so the 3D view is made when it is needed and freed when the user leaves. */}
-            {step === ROOM_3D && <Room3DView description={description} />}
-
-            {/* It stays while the step is hidden, so that a layout that was paid for, or one that is being made, is not lost when the user goes back. It is made again when what a layout depends on changes: the types and sizes of the furniture, or the floor of the room. */}
-            <LayoutGenerator key={layoutKey(description)} description={description} />
-
-            <div>
-              <button
-                type="button"
-                onClick={() => setStep(SUMMARY)}
-                className="rounded-full border border-black/15 px-5 py-2.5 text-sm font-medium hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-white/20 dark:hover:bg-white/10"
-              >
-                Back to your room
-              </button>
-            </div>
-
-            {step === ROOM_3D && <RoomDescriptionView description={description} />}
-          </section>
+          <Room3DStep
+            key={layoutKey(description)}
+            description={description}
+            active={step === ROOM_3D}
+            onBack={() => setStep(SUMMARY)}
+          />
         )}
       </Step>
     </div>

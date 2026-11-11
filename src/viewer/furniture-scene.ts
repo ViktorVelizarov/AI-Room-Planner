@@ -5,6 +5,7 @@ import {
   Group,
   LineBasicMaterial,
   LineSegments,
+  MathUtils,
   Mesh,
   MeshLambertMaterial,
   Vector3,
@@ -14,7 +15,7 @@ import type { FurnitureItem, FurnitureLabel } from "../shared/furniture";
 import { applyAppearance, mainMaterialOf } from "./appearance";
 import type { Placement } from "./arrangement";
 
-/** A piece of furniture and where it stands. */
+/** A piece of furniture, and where it stands and which way it faces. */
 export type PlacedPiece = { item: FurnitureItem; placement: Placement };
 
 /** A piece that is shown as a plain box, because it has no 3D model to show. */
@@ -71,21 +72,34 @@ async function loadType(type: FurnitureLabel, loadModel: ModelLoader, timeoutMs:
 const stretch = (wanted: number, native: number) => (native > 1e-6 ? wanted / native : 1);
 
 /**
+ * Puts a piece where its placement says, the same way for every piece, a model or a box: its origin,
+ * which is the middle of its footprint on the floor, goes to the place, and it is turned about the
+ * vertical axis so that its front faces the way the placement says (the rule of `Placement`, which
+ * is also the rule of the footprints that a layout is checked with). The piece is stretched along its
+ * own sides before it is turned, so that its width stays across its front, and it is turned about
+ * its middle, so that it keeps standing on the floor.
+ */
+function stand(object: Object3D, { x_m, z_m, rotation_deg = 0 }: Placement) {
+  object.position.set(x_m, 0, z_m);
+  object.rotation.y = MathUtils.degToRad(rotation_deg);
+}
+
+/**
  * A copy of the model, as big as the piece: stretched along each side to the piece's width, height
- * and depth, and standing where it is placed, with the colour and the material look of the piece. A
- * model stands on the floor with the middle of its footprint at its origin, so stretching it about
- * the origin keeps its base on the floor.
+ * and depth, and standing where it is placed, facing the way it is placed, with the colour and the
+ * material look of the piece. A model stands on the floor with the middle of its footprint at its
+ * origin, so stretching it about the origin keeps its base on the floor.
  */
 function placeModel({ model, size }: { model: Object3D; size: Vector3 }, { item, placement }: PlacedPiece, index: number): Object3D {
   const object = model.clone(true);
   applyAppearance(object, item, mainMaterialOf(model));
   object.scale.set(stretch(item.width_cm / 100, size.x), stretch(item.height_cm / 100, size.y), stretch(item.depth_cm / 100, size.z));
-  object.position.set(placement.x_m, 0, placement.z_m);
+  stand(object, placement);
   object.userData = { index, type: item.label };
   return object;
 }
 
-/** A plain grey box of the size of the piece, with an outline, standing where it is placed. */
+/** A plain grey box of the size of the piece, with an outline, standing where it is placed and turned as it is placed. */
 function placeholderBox({ item, placement }: PlacedPiece, index: number): Object3D {
   const width = item.width_cm / 100;
   const height = item.height_cm / 100;
@@ -99,7 +113,7 @@ function placeholderBox({ item, placement }: PlacedPiece, index: number): Object
   const group = new Group();
   group.name = item.label;
   group.add(box, outline);
-  group.position.set(placement.x_m, 0, placement.z_m);
+  stand(group, placement);
   group.userData = { index, type: item.label, placeholder: true };
   return group;
 }
