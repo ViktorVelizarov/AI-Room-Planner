@@ -167,7 +167,7 @@ export function LayoutGenerator({
                 towards the front wall, which is the side you look at the room from.
               </p>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                The 3D room above shows the layout that you chose with Show in the 3D room: look around it to judge how the furniture stands.
+                The 3D room above shows the layout that you chose, with the buttons under it or with Show in the 3D room on a card: look around it to judge how the furniture stands.
               </p>
             </>
           )}

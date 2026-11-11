@@ -236,7 +236,7 @@ describe("LayoutGenerator", () => {
       await user.click(button());
 
       expect(await screen.findAllByText(/A position is the middle of the piece, in metres from the middle of the room: x towards the right wall and z towards the front wall/)).toHaveLength(1);
-      expect(screen.getAllByText(/The 3D room above shows the layout that you chose with Show in the 3D room/)).toHaveLength(1);
+      expect(screen.getAllByText(/The 3D room above shows the layout that you chose, with the buttons under it or with Show in the 3D room on a card/)).toHaveLength(1);
     });
 
     it("says nothing about the 3D room before there are layouts", () => {

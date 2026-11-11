@@ -951,6 +951,264 @@ describe("RoomPlanner: the layouts (US-21)", () => {
     });
   });
 
+  describe("the buttons under the 3D view (US-23)", () => {
+    const switcher = () => within(screen.getByRole("group", { name: "Layout" }));
+    const buttonFor = (style: LayoutStyle) => switcher().getByRole("button", { name: STYLE_NAMES[style] });
+    const chosen = (style: LayoutStyle) => buttonFor(style).getAttribute("aria-pressed");
+    const buttonNames = () => switcher().getAllByRole("button").map((button) => button.textContent);
+    /** What the layout that is shown is about, as it is written under the buttons. */
+    const idea = () => screen.getByRole("group", { name: "Layout" }).nextElementSibling!.textContent;
+    const follows = (first: Node, second: Node) => Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    /** The 3D room open, the three layouts asked for and shown. */
+    async function withLayouts(outcome: LayoutOutcome = layoutsFor(1)) {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue(outcome);
+      const planner = await setupToSummary();
+      await open3dRoom(planner.user);
+      await planner.user.click(generateButton());
+      await inThe3dRoom(planner.step).findByRole("list");
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(2));
+      return planner;
+    }
+
+    it("has a button for each layout, once the layouts are made, and the first layout is shown (AC1)", async () => {
+      await withLayouts();
+
+      expect(buttonNames()).toEqual(["Spacious", "Cosy", "Work-focused"]);
+      expect(chosen("spacious")).toBe("true");
+      expect(chosen("cosy")).toBe("false");
+      expect(chosen("work")).toBe("false");
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 1.5, z_m: -1, rotation_deg: 90 }]);
+    });
+
+    it("has no buttons before there are layouts, and when none can be made", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue({ ok: false, failure: { code: "invalid_answer", message: "The AI could not make a usable layout this time. Please try again.", retryable: true } });
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+      expect(screen.queryByRole("group", { name: "Layout" })).toBeNull();
+
+      await user.click(generateButton());
+
+      await inThe3dRoom(step).findByRole("alert");
+      expect(screen.queryByRole("group", { name: "Layout" })).toBeNull();
+      expect(screen.queryByText("Layout")).toBeNull();
+    });
+
+    it("is under the 3D view, above the size of the room and the Reset button, and above the box that makes the layouts: where the user is looking", async () => {
+      const { step } = await withLayouts();
+
+      const view = screen.getByRole("group", { name: /^3D view of the room/ });
+      const group = screen.getByRole("group", { name: "Layout" });
+      expect(follows(view, group)).toBe(true);
+      expect(follows(group, screen.getByRole("button", { name: "Reset view" }))).toBe(true);
+      expect(follows(group, screen.getByRole("heading", { name: "Suggest layouts", level: 3 }))).toBe(true);
+      // It is in the 3D room, and the cards do not have a copy of it.
+      expect(inThe3dRoom(step).getByRole("group", { name: "Layout" })).toBe(group);
+      expect(card("cosy").queryByRole("group", { name: "Layout" })).toBeNull();
+    });
+
+    it("writes the name and the idea of the layout that is shown, under the buttons, and says it of the layout that is chosen (AC3)", async () => {
+      const { user } = await withLayouts();
+      expect(idea()).toBe("Spacious: The idea of the Spacious layout.");
+
+      await user.click(buttonFor("work"));
+
+      await waitFor(() => expect(idea()).toBe("Work-focused: The idea of the Work-focused layout."));
+    });
+
+    it("shows another layout in the same 3D room when its button is pressed, without asking the AI again, without a new view and without moving the camera (AC2)", async () => {
+      const { user } = await withLayouts();
+
+      await user.click(buttonFor("cosy"));
+
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(3));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: -1.5, z_m: 1, rotation_deg: 180 }]);
+      expect(chosen("cosy")).toBe("true");
+      expect(chosen("spacious")).toBe("false");
+      expect(screen.getByRole("group", { name: /with 1 piece of furniture in the Cosy layout$/ })).toBeTruthy();
+      // The same viewer, which has not been stopped, and which keeps the camera wherever the user put it: it is not asked to put it back, or to move it.
+      expect(viewers).toHaveLength(1);
+      expect(viewers[0].dispose).not.toHaveBeenCalled();
+      expect(viewers[0].resetView).not.toHaveBeenCalled();
+      expect(viewers[0].move).not.toHaveBeenCalled();
+      expect(layoutRequest).toHaveBeenCalledTimes(1);
+
+      await user.click(buttonFor("work"));
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(4));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 0.5, z_m: -1.5, rotation_deg: 270 }]);
+      await user.click(buttonFor("spacious"));
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(5));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 1.5, z_m: -1, rotation_deg: 90 }]);
+      expect(viewers).toHaveLength(1);
+    });
+
+    it("says which layout the 3D room is in as the text of the step does, whichever button chose it", async () => {
+      const { user, step } = await withLayouts();
+
+      await user.click(buttonFor("cosy"));
+
+      await waitFor(() => expect(inThe3dRoom(step).getByText(/with your furniture arranged as in the Cosy layout below\./)).toBeTruthy());
+    });
+
+    it("is one choice with the Show in the 3D room button of each card: choosing with either is seen on both", async () => {
+      const { user } = await withLayouts();
+
+      await show(user, "work");
+      await waitFor(() => expect(chosen("work")).toBe("true"));
+      expect(chosen("spacious")).toBe("false");
+      expect(pressed("work")).toBe("true");
+      expect(idea()).toBe("Work-focused: The idea of the Work-focused layout.");
+
+      await user.click(buttonFor("cosy"));
+      await waitFor(() => expect(pressed("cosy")).toBe("true"));
+      expect(pressed("work")).toBe("false");
+      expect(pressed("spacious")).toBe("false");
+      expect(chosen("cosy")).toBe("true");
+      expect(chosen("work")).toBe("false");
+    });
+
+    it("keeps the focus on the button that was pressed, and can be used with the keyboard", async () => {
+      const { user } = await withLayouts();
+      buttonFor("cosy").focus();
+
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => expect(chosen("cosy")).toBe("true"));
+      expect(document.activeElement).toBe(buttonFor("cosy"));
+      await user.tab();
+      await user.keyboard(" ");
+      await waitFor(() => expect(chosen("work")).toBe("true"));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 0.5, z_m: -1.5, rotation_deg: 270 }]);
+    });
+
+    it("has a button only for the layouts that were made: not for a style that failed, which has its message in its card", async () => {
+      await withLayouts(layoutsFor(1, ["cosy"]));
+
+      expect(buttonNames()).toEqual(["Spacious", "Work-focused"]);
+      expect(chosen("spacious")).toBe("true");
+      expect(card("cosy").getByRole("button", { name: "Try again" })).toBeTruthy();
+    });
+
+    it("gets a button for a style that is made again, in the place of its style, without changing what is shown", async () => {
+      const { user } = await withLayouts(layoutsFor(1, ["cosy"]));
+      layoutRequest.mockResolvedValueOnce(oneStyle("cosy", 1));
+      await user.click(buttonFor("work"));
+      await waitFor(() => expect(chosen("work")).toBe("true"));
+      const shownBefore = viewers[0].showFurniture.mock.calls.length;
+
+      await user.click(card("cosy").getByRole("button", { name: "Try again" }));
+
+      await card("cosy").findByRole("table");
+      expect(buttonNames()).toEqual(["Spacious", "Cosy", "Work-focused"]);
+      expect(chosen("work")).toBe("true");
+      expect(idea()).toBe("Work-focused: The idea of the Work-focused layout.");
+      expect(viewers[0].showFurniture).toHaveBeenCalledTimes(shownBefore);
+      await user.click(buttonFor("cosy"));
+      await waitFor(() => expect(lastPlaces(viewers[0])).toEqual([{ x_m: -1.5, z_m: 1, rotation_deg: 180 }]));
+    });
+
+    it("has the buttons of a new set of three when it comes, with the first layout shown, and not the old ones", async () => {
+      const { user } = await withLayouts();
+      layoutRequest.mockResolvedValueOnce(layoutsFor(1, [], { used: 6, limit: 10 }));
+      await user.click(buttonFor("work"));
+      await waitFor(() => expect(chosen("work")).toBe("true"));
+
+      await user.click(generateButton());
+
+      await waitFor(() => expect(chosen("spacious")).toBe("true"));
+      expect(chosen("work")).toBe("false");
+      expect(buttonNames()).toEqual(["Spacious", "Cosy", "Work-focused"]);
+    });
+
+    it("keeps the buttons, and the layout that is shown, when a new set cannot be made", async () => {
+      const { user, step } = await withLayouts();
+      layoutRequest.mockResolvedValueOnce({ ok: false, failure: { code: "ai_unavailable", message: "Not now.", retryable: true } });
+      await user.click(buttonFor("cosy"));
+      await waitFor(() => expect(chosen("cosy")).toBe("true"));
+
+      await user.click(generateButton());
+
+      await inThe3dRoom(step).findAllByRole("alert");
+      expect(buttonNames()).toEqual(["Spacious", "Cosy", "Work-focused"]);
+      expect(chosen("cosy")).toBe("true");
+      expect(idea()).toBe("Cosy: The idea of the Cosy layout.");
+    });
+
+    it("has the buttons when the user comes back to the 3D room, with the layout that was chosen shown, which is the first picture", async () => {
+      const { user } = await withLayouts();
+      await user.click(buttonFor("work"));
+      await waitFor(() => expect(chosen("work")).toBe("true"));
+      await user.click(screen.getByRole("button", { name: "Back to your room" }));
+      expect(screen.queryByRole("group", { name: "Layout" })).toBeNull();
+
+      await open3dRoom(user);
+
+      expect(buttonNames()).toEqual(["Spacious", "Cosy", "Work-focused"]);
+      expect(chosen("work")).toBe("true");
+      expect(idea()).toBe("Work-focused: The idea of the Work-focused layout.");
+      expect(showings(viewers[1])).toHaveLength(1);
+      expect(showings(viewers[1])[0][0].placement).toEqual({ x_m: 0.5, z_m: -1.5, rotation_deg: 270 });
+    });
+
+    it("has the buttons of layouts that were still being made when the user went back, when the user comes to the 3D room again", async () => {
+      detect.mockResolvedValue(success);
+      let finish!: (outcome: LayoutOutcome) => void;
+      layoutRequest.mockReturnValue(new Promise<LayoutOutcome>((resolve) => (finish = resolve)));
+      const { user } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await user.click(screen.getByRole("button", { name: "Back to your room" }));
+      await act(async () => finish(layoutsFor(1)));
+
+      await open3dRoom(user);
+
+      expect(buttonNames()).toEqual(["Spacious", "Cosy", "Work-focused"]);
+      expect(chosen("spacious")).toBe("true");
+    });
+
+    it("has no buttons for layouts that are dropped because the furniture changed", async () => {
+      const { user } = await withLayouts();
+      await user.click(screen.getByRole("button", { name: "Back to your room" }));
+      await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "rug");
+      await user.click(screen.getByRole("button", { name: "Add furniture" }));
+
+      await open3dRoom(user);
+
+      expect(screen.queryByRole("group", { name: "Layout" })).toBeNull();
+    });
+
+    it("has no buttons when the browser cannot show 3D, since there is no picture to change, and still lists the layouts", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue(layoutsFor(1));
+      createViewer.mockImplementation(() => {
+        throw new Error("Error creating WebGL context.");
+      });
+      const { user, step } = await setupToSummary();
+      await user.click(toThe3dRoom());
+      await inThe3dRoom(step).findByRole("alert");
+
+      await user.click(generateButton());
+
+      expect(await inThe3dRoom(step).findByRole("list")).toBeTruthy();
+      expect(screen.queryByRole("group", { name: "Layout" })).toBeNull();
+      expect(inThe3dRoom(step).getAllByRole("table")).toHaveLength(3);
+    });
+
+    it("keeps one viewer alive, and none stopped, however often the layout is chosen", async () => {
+      const { user } = await withLayouts();
+
+      for (const style of ["cosy", "work", "spacious", "work"] as const) {
+        await user.click(buttonFor(style));
+        await waitFor(() => expect(chosen(style)).toBe("true"));
+      }
+
+      expect(viewers).toHaveLength(1);
+      expect(viewers[0].dispose).not.toHaveBeenCalled();
+    });
+  });
+
   describe("a style that fails while the others work (AC4)", () => {
     it("shows the other two, a message for the failed one, and shows the first that worked in the 3D room", async () => {
       detect.mockResolvedValue(success);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { FURNITURE_NAMES } from "../shared/furniture";
 import type { Pose } from "../shared/layout";
 import { formatMetres } from "../shared/room";
@@ -50,16 +50,23 @@ function describeUnmatched(unmatched: UnmatchedPiece[]): string {
  * layout for this list of furniture (one pose for each piece, in the order of the list); otherwise
  * it is lined up along the back wall. A piece with no 3D model is a plain box, and the user is told
  * which. If the browser cannot show 3D, it says so instead.
+ *
+ * What it is given as `children` goes right under the picture, above the size of the room and the
+ * Reset button: the buttons that choose the layout (US-23) are there, so that they are by the picture
+ * that they change, and the picture does not move when what they say about a layout is longer or shorter.
+ * Nothing is shown of it when there is no 3D view, since there would be nothing for it to change.
  */
 export function Room3DView({
   description,
   layout,
   layoutName,
+  children,
 }: {
   description: RoomDescription;
   layout?: readonly Pose[] | null;
   /** The name of the layout, such as "Cosy", which the label of the view says. */
   layoutName?: string;
+  children?: ReactNode;
 }) {
   const viewer = useRef<RoomViewer | null>(null);
   const [failed, setFailed] = useState(false);
@@ -159,6 +166,8 @@ export function Room3DView({
           </p>
         )}
       </div>
+
+      {children}
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className="text-xs text-zinc-500 dark:text-zinc-400">

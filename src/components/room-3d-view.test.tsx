@@ -330,6 +330,99 @@ describe("Room3DView: a layout (US-20)", () => {
   });
 });
 
+describe("Room3DView: what it is given to show under the picture (US-23)", () => {
+  const extra = () => screen.getByText("Buttons that choose a layout");
+  const follows = (first: Node, second: Node) => Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const poses: Pose[] = [
+    { x_m: 1, z_m: 0.5, rotation_deg: 180 },
+    { x_m: -2, z_m: -1, rotation_deg: 90 },
+  ];
+
+  it("puts it right under the picture, above the size of the room and the Reset button, so that it is by the picture that it changes", async () => {
+    await show(
+      <Room3DView description={description}>
+        <p>Buttons that choose a layout</p>
+      </Room3DView>,
+    );
+
+    expect(follows(view(), extra())).toBe(true);
+    expect(follows(extra(), screen.getByText(/The lines on the floor are 1 m apart/))).toBe(true);
+    expect(follows(extra(), screen.getByRole("button", { name: "Reset view" }))).toBe(true);
+    expect(follows(extra(), document.getElementById(view().getAttribute("aria-describedby")!)!)).toBe(true);
+  });
+
+  it("puts it after the line that says which pieces are plain boxes and that the furniture is loading, which belong to the picture", async () => {
+    answer = () => new Promise(() => {});
+
+    await show(
+      <Room3DView description={description}>
+        <p>Buttons that choose a layout</p>
+      </Room3DView>,
+    );
+
+    expect(follows(screen.getByRole("status"), extra())).toBe(true);
+    expect(screen.getByRole("status").textContent).toBe(LOADING);
+  });
+
+  it("shows nothing extra when it is given nothing", async () => {
+    const { container } = await show(<Room3DView description={description} />);
+
+    expect(screen.queryByText("Buttons that choose a layout")).toBeNull();
+    expect(container.querySelectorAll('[role="group"]')).toHaveLength(1);
+  });
+
+  it("is not in the view: it does not take part in the keys that turn the room, which would otherwise be taken from its buttons", async () => {
+    const user = userEvent.setup();
+    await show(
+      <Room3DView description={description}>
+        <button type="button">Cosy</button>
+      </Room3DView>,
+    );
+    await user.click(screen.getByRole("button", { name: "Cosy" }));
+
+    await user.keyboard("{ArrowLeft}{ArrowRight}+");
+
+    expect(viewers[0].move).not.toHaveBeenCalled();
+    expect(view().contains(screen.getByRole("button", { name: "Cosy" }))).toBe(false);
+  });
+
+  it("is not shown when the browser cannot show 3D, since there is no picture for it to change", async () => {
+    create.mockImplementation(() => {
+      throw new Error("Error creating WebGL context.");
+    });
+
+    await show(
+      <Room3DView description={description}>
+        <p>Buttons that choose a layout</p>
+      </Room3DView>,
+    );
+
+    expect(screen.getByRole("alert").textContent).toContain("The 3D view could not start");
+    expect(screen.queryByText("Buttons that choose a layout")).toBeNull();
+  });
+
+  it("does not make a new viewer or ask for the furniture again when only what it shows changes", async () => {
+    const { rerender } = await show(
+      <Room3DView description={description} layout={poses}>
+        <p>Buttons that choose a layout</p>
+      </Room3DView>,
+    );
+
+    await act(async () =>
+      rerender(
+        <Room3DView description={description} layout={poses}>
+          <p>Buttons that choose a layout, and more</p>
+        </Room3DView>,
+      ),
+    );
+
+    expect(screen.getByText("Buttons that choose a layout, and more")).toBeTruthy();
+    expect(viewers).toHaveLength(1);
+    expect(viewers[0].dispose).not.toHaveBeenCalled();
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Room3DView: pieces that are plain boxes (AC2)", () => {
   it("tells the user which piece, by its name and its place in the list", async () => {
     answer = async () => ({ count: 2, unmatched: [{ index: 1, type: "coffee_table", reason: "no-model" }] });
