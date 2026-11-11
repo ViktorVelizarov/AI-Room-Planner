@@ -3,7 +3,7 @@ import { describeProblems, findProblems, fixLayout } from "../shared/layout-fix"
 import type { RoomDescription } from "../shared/room-description";
 import { generateLayoutWithGemini } from "./gemini";
 import { parseLayoutAnswer } from "./layout-schema";
-import type { GenerateLayoutFn, LayoutResult } from "./types";
+import type { GenerateLayoutFn, LayoutOptions, LayoutResult } from "./types";
 
 /** The first try plus one retry. */
 export const MAX_LAYOUT_ATTEMPTS = 2;
@@ -67,11 +67,13 @@ export function finishLayout(description: RoomDescription, poses: Pose[]): { pos
  * throws a LayoutError rather than returning broken data. An answer that is a layout but has pieces
  * in each other or through a wall is fixed in code, and not asked for again. A room that cannot hold
  * the pieces is refused before the model is asked. Errors from the call itself (network, bad key)
- * are not retried.
+ * are not retried. With a style in `options` the layout is asked for in that style, and the result
+ * has the model's description of it (when the answer had a usable one).
  */
 export async function generateLayout(
   description: RoomDescription,
   generate: GenerateLayoutFn = generateLayoutWithGemini,
+  options: LayoutOptions = {},
 ): Promise<LayoutResult> {
   const tooFull = whyNoLayoutIsPossible(description);
   if (tooFull) throw new RoomTooFullError(tooFull);
@@ -80,14 +82,14 @@ export async function generateLayout(
   const usage = { inputTokens: 0, outputTokens: 0 };
 
   for (let attempt = 1; attempt <= MAX_LAYOUT_ATTEMPTS; attempt++) {
-    const answer = await generate({ description, feedback: reasons.at(-1) });
+    const answer = await generate({ description, feedback: reasons.at(-1), ...options });
     usage.inputTokens += answer.usage?.inputTokens ?? 0;
     usage.outputTokens += answer.usage?.outputTokens ?? 0;
 
     const parsed = parseLayoutAnswer(answer.text, description.furniture, answer.note);
     if (parsed.ok) {
       const finished = finishLayout(description, parsed.poses);
-      return { ...finished, attempts: attempt, usage };
+      return { ...finished, ...(parsed.description ? { description: parsed.description } : {}), attempts: attempt, usage };
     }
     reasons.push(parsed.reason);
   }

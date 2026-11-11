@@ -1,5 +1,6 @@
 import type { FurnitureItem } from "../shared/furniture";
 import type { Pose } from "../shared/layout";
+import type { LayoutStyle, MadeLayout } from "../shared/layout-styles";
 import type { PhotoType } from "../shared/photo";
 import type { RoomDescription } from "../shared/room-description";
 
@@ -33,8 +34,18 @@ export type DetectionResult = {
   usage: TokenUsage;
 };
 
+/** What `generateLayout` is asked besides the room: the style to arrange it in, and what that layout has to differ from. */
+export type LayoutOptions = {
+  /** The style to arrange the furniture in. Without one the model arranges it as it sees fit. */
+  style?: LayoutStyle;
+  /** The other styles that are made at the same time, which this layout has to differ from although it cannot see them. */
+  alongside?: readonly LayoutStyle[];
+  /** Layouts that are already made, which this one has to differ from. */
+  avoid?: readonly MadeLayout[];
+};
+
 /** What one call to the model for a layout is given. */
-export type LayoutRequest = {
+export type LayoutRequest = LayoutOptions & {
   description: RoomDescription;
   /** Why the answer before this one could not be used, when this is the second try. */
   feedback?: string;
@@ -46,6 +57,8 @@ export type GenerateLayoutFn = (request: LayoutRequest) => Promise<ModelAnswer>;
 export type LayoutResult = {
   /** Where each piece goes, in the order of the furniture list. */
   poses: Pose[];
+  /** What the model says the idea of the layout is, in a sentence or two for the user. Only for a layout made in a style, and only if its answer was usable. */
+  description?: string;
   /** The pieces that the app moved, by their places in the list, to stop them overlapping or going through a wall. */
   adjusted: number[];
   /** Model calls made: 1, or 2 when the first answer was invalid. Each one is a paid call. */

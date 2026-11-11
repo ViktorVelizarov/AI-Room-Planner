@@ -274,6 +274,21 @@ describe("the request to Gemini", () => {
     expect(part.text).toContain("YOUR PREVIOUS ANSWER COULD NOT BE USED: Piece 1 (coffee_table) is not in the answer.");
   });
 
+  it("has the style, the styles made at the same time and the layouts that are already made, when it is given them (US-21)", () => {
+    const [part] = layoutRequestParts({ description, style: "cosy", alongside: ["work"], avoid: [{ style: "spacious", poses: fine }] });
+
+    expect(part.text).toContain("THE STYLE OF THIS LAYOUT: COSY");
+    expect(part.text).toContain("ALREADY MADE");
+    expect(part.text).toContain("The Spacious layout puts the pieces here");
+    expect(part.text).toContain('"description"');
+  });
+
+  it("has no style when it is not given one", () => {
+    const [part] = layoutRequestParts({ description, alongside: ["work"] });
+
+    expect(part.text).not.toContain("THE STYLE OF THIS LAYOUT");
+  });
+
   it("reports a missing API key before sending anything", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
 
@@ -284,5 +299,70 @@ describe("the request to Gemini", () => {
     vi.stubEnv("GEMINI_API_KEY", "");
 
     await expect(generateLayout(description)).rejects.toBeInstanceOf(MissingApiKeyError);
+  });
+});
+
+describe("generateLayout: a layout in a style (US-21)", () => {
+  const withDescription = (poses: Pose[], text: unknown): ModelAnswer => ({
+    text: JSON.stringify({ description: text, pieces: poses.map((pose, index) => ({ index, label: labels[index], ...pose })) }),
+    usage: { inputTokens: 10, outputTokens: 5 },
+  });
+
+  it("gives the model the style, and what it is to differ from, with the room, in every call, the retry too", async () => {
+    const avoid = [{ style: "spacious" as const, poses: fine }];
+    const generate = vi.fn<GenerateLayoutFn>().mockResolvedValueOnce({ text: "no" }).mockResolvedValueOnce(answerFor(fine));
+
+    await generateLayout(description, generate, { style: "cosy", alongside: ["work"], avoid });
+
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[0][0]).toEqual({ description, feedback: undefined, style: "cosy", alongside: ["work"], avoid });
+    expect(generate.mock.calls[1][0]).toEqual({ description, feedback: expect.stringMatching(/not valid JSON/), style: "cosy", alongside: ["work"], avoid });
+  });
+
+  it("gives the description that the model wrote, with the poses", async () => {
+    const generate = vi.fn<GenerateLayoutFn>().mockResolvedValue(withDescription(fine, "Everything is close together. The rug is the middle of the room."));
+
+    const result = await generateLayout(description, generate, { style: "cosy" });
+
+    expect(result.description).toBe("Everything is close together. The rug is the middle of the room.");
+    expect(result.poses).toEqual(fine);
+  });
+
+  it("has no description when the answer had none, or none that can be used, and does not ask again for that", async () => {
+    for (const text of [undefined, "", null, 12, "x".repeat(500)]) {
+      const generate = vi.fn<GenerateLayoutFn>().mockResolvedValue(withDescription(fine, text));
+
+      const result = await generateLayout(description, generate, { style: "cosy" });
+
+      expect("description" in result, String(text)).toBe(false);
+      expect(generate).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("gives the description of the answer that was used: that of the second try, when the first was not usable", async () => {
+    const generate = vi.fn<GenerateLayoutFn>().mockResolvedValueOnce({ text: "{}" }).mockResolvedValueOnce(withDescription(fine, "The second try."));
+
+    const result = await generateLayout(description, generate, { style: "work" });
+
+    expect(result.description).toBe("The second try.");
+    expect(result.attempts).toBe(2);
+  });
+
+  it("still fixes a layout with pieces in each other, and says which, as for a layout with no style", async () => {
+    const overlapping = fine.map((pose, index) => (index === 1 ? { ...pose, z_m: 0.9 } : pose));
+    const generate = vi.fn<GenerateLayoutFn>().mockResolvedValue(withDescription(overlapping, "Open."));
+
+    const result = await generateLayout(description, generate, { style: "spacious" });
+
+    expect(result.adjusted.length).toBeGreaterThan(0);
+    expect(isValid(findProblems(description.furniture, result.poses, room))).toBe(true);
+    expect(result.description).toBe("Open.");
+  });
+
+  it("refuses a room that is too full without asking the model, in a style too", async () => {
+    const generate = vi.fn<GenerateLayoutFn>();
+
+    await expect(generateLayout({ room: { ...room, width_m: 1, length_m: 1 }, furniture: [sofa] }, generate, { style: "cosy" })).rejects.toBeInstanceOf(RoomTooFullError);
+    expect(generate).not.toHaveBeenCalled();
   });
 });

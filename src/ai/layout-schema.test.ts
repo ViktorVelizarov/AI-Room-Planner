@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FURNITURE_LABELS } from "../shared/furniture";
 import { MAX_LAYOUT_PIECES } from "../shared/layout";
-import { layoutAnswerSchema, layoutJsonSchema, parseLayoutAnswer } from "./layout-schema";
+import { MAX_DESCRIPTION_LENGTH, cleanDescription, layoutAnswerSchema, layoutJsonSchema, parseLayoutAnswer } from "./layout-schema";
 
 const items = [{ label: "sofa" }, { label: "coffee_table" }, { label: "tv_stand" }] as const;
 
@@ -196,5 +196,148 @@ describe("layoutJsonSchema: what Gemini is asked to answer with", () => {
   it("is the schema that the answers are checked with", () => {
     expect(layoutAnswerSchema.safeParse(JSON.parse(good)).success).toBe(true);
     expect(layoutAnswerSchema.safeParse({ pieces: [{ index: 0 }] }).success).toBe(false);
+  });
+
+  it("has an optional description, as text, that says what it is for, besides the pieces (US-21 AC2)", () => {
+    const withDescription = layoutJsonSchema() as unknown as { properties: { description: { type: string; description: string } }; required?: string[] };
+
+    expect(withDescription.properties.description.type).toBe("string");
+    expect(withDescription.properties.description.description).toMatch(/one or two plain sentences/);
+    // Optional, so that an answer for a layout that was not asked for in a style is still an answer.
+    expect(withDescription.required ?? []).toEqual(["pieces"]);
+  });
+
+  it("has the description required, with the same words about it, for a layout in a style, because the model leaves out what is only optional", () => {
+    const styled = layoutJsonSchema({ withDescription: true }) as unknown as { properties: { description: { type: string; description: string }; pieces: { type: string } }; required: string[]; $schema?: string };
+
+    expect([...styled.required].sort()).toEqual(["description", "pieces"]);
+    expect(styled.properties.description.type).toBe("string");
+    expect(styled.properties.description.description).toMatch(/one or two plain sentences/);
+    expect(styled.properties.pieces.type).toBe("array");
+    expect(styled.$schema).toBeUndefined();
+  });
+
+  it("is the schema without a required description when it is asked for nothing, or for the description not to be", () => {
+    const plain = (value: unknown) => (value as { required?: string[] }).required;
+
+    expect(plain(layoutJsonSchema())).toEqual(["pieces"]);
+    expect(plain(layoutJsonSchema({}))).toEqual(["pieces"]);
+    expect(plain(layoutJsonSchema({ withDescription: false }))).toEqual(["pieces"]);
+  });
+
+  it("is not what answers are held to: an answer without the description, or with one that is not text, is still an answer", () => {
+    expect(parseLayoutAnswer(good, items).ok).toBe(true);
+    expect(parseLayoutAnswer(JSON.stringify({ description: null, pieces: JSON.parse(good).pieces }), items).ok).toBe(true);
+  });
+});
+
+describe("cleanDescription: the description of a layout, as it is shown (US-21 AC2)", () => {
+  it("is what the model wrote, when it is a sentence or two", () => {
+    expect(cleanDescription("Everything stands along the walls. The middle of the room stays open.")).toBe("Everything stands along the walls. The middle of the room stays open.");
+    expect(cleanDescription("One sentence only.")).toBe("One sentence only.");
+  });
+
+  it("is on one line, with the white space made single and the ends cut off", () => {
+    expect(cleanDescription("  A snug group\n\taround the rug.   The lamp is by the sofa.  ")).toBe("A snug group around the rug. The lamp is by the sofa.");
+  });
+
+  it("is the first two sentences when there are more", () => {
+    expect(cleanDescription("One. Two. Three. Four.")).toBe("One. Two.");
+    expect(cleanDescription("The desk is by the wall. The shelf is next to it! Is that all? Yes.")).toBe("The desk is by the wall. The shelf is next to it!");
+  });
+
+  it("ends a sentence at a question mark and an exclamation mark as well as at a full stop", () => {
+    expect(cleanDescription("Why? Because it is cosy! And more. And more.")).toBe("Why? Because it is cosy!");
+  });
+
+  it("does not cut a sentence in the middle of a number or after an abbreviation that goes on in lower case", () => {
+    expect(cleanDescription("The paths are 1.5 m wide, e.g. to the desk. The rug is 2.3 m long. A third.")).toBe("The paths are 1.5 m wide, e.g. to the desk. The rug is 2.3 m long.");
+  });
+
+  it("starts a new sentence at a quotation mark or a bracket as well as at a capital", () => {
+    expect(cleanDescription('Calm. "Open" is the word. More.')).toBe('Calm. "Open" is the word.');
+    expect(cleanDescription("Calm. (Open) is the word. More.")).toBe("Calm. (Open) is the word.");
+  });
+
+  it("keeps a text that has no full stop at all", () => {
+    expect(cleanDescription("an open room with wide paths")).toBe("an open room with wide paths");
+  });
+
+  it("is nothing for an empty text, one that is only white space, and what is not text", () => {
+    for (const nothing of ["", "   ", "\n\t", undefined, null, 0, 42, true, {}, [], ["a sentence."]]) {
+      expect(cleanDescription(nothing), JSON.stringify(nothing)).toBeUndefined();
+    }
+  });
+
+  it("is nothing for a text longer than 300 characters, after the sentences beyond two have been left out, and so is used as it is up to 300", () => {
+    const sentence = (length: number) => "A".repeat(length - 1) + ".";
+
+    expect(MAX_DESCRIPTION_LENGTH).toBe(300);
+    expect(cleanDescription(sentence(300))).toHaveLength(300);
+    expect(cleanDescription(sentence(301))).toBeUndefined();
+    // Two sentences of 150 characters with the space between them make 301, which is too long for two (see below); one character less makes 300.
+    expect(cleanDescription(`${sentence(150)} ${sentence(149)}`)).toHaveLength(300);
+  });
+
+  it("is the first sentence alone when the first two together are too long but the first is not, so that a description that runs on is not thrown away", () => {
+    const first = "A".repeat(149) + ".";
+    const second = "B".repeat(150) + ".";
+
+    expect(cleanDescription(`${first} ${second}`)).toBe(first);
+    expect(cleanDescription(`${first} ${second} Third one.`)).toBe(first);
+  });
+
+  it("is nothing when even the first sentence is too long", () => {
+    expect(cleanDescription(`${"A".repeat(300)}. Short.`)).toBeUndefined();
+  });
+
+  it("is the two sentences, and not the first alone, when they fit", () => {
+    expect(cleanDescription("First one. Second one.")).toBe("First one. Second one.");
+  });
+
+  it("does not hold a long third sentence against the first two", () => {
+    expect(cleanDescription(`Short one. Short two. ${"B".repeat(500)}.`)).toBe("Short one. Short two.");
+  });
+
+  it("does not throw, whatever the text", () => {
+    for (const text of ["\u0000", "😀. 😀.", ".".repeat(1000), "A. ".repeat(500), "\\", "{}"]) {
+      expect(() => cleanDescription(text), text.slice(0, 10)).not.toThrow();
+    }
+  });
+});
+
+describe("parseLayoutAnswer: the description of the layout (US-21 AC2)", () => {
+  const withDescription = (description: unknown) => JSON.stringify({ description, pieces: JSON.parse(good).pieces });
+
+  it("comes with the poses when the answer has one", () => {
+    const result = parseLayoutAnswer(withDescription("Snug and sociable. Everything is close to the rug."), items);
+
+    expect(result.ok && result.description).toBe("Snug and sociable. Everything is close to the rug.");
+    expect(result.ok && result.poses).toHaveLength(3);
+  });
+
+  it("is cleaned in the way that cleanDescription does", () => {
+    const result = parseLayoutAnswer(withDescription("One.\nTwo. Three."), items);
+
+    expect(result.ok && result.description).toBe("One. Two.");
+  });
+
+  it("is not there at all, not even as undefined, when the answer has none", () => {
+    const result = parseLayoutAnswer(good, items);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && "description" in result).toBe(false);
+  });
+
+  it.each([[""], ["   "], [null], [7], [{ text: "no" }], [["a"]], ["x".repeat(400)]])("is left out, and the answer is still used, when it is %j", (description) => {
+    const result = parseLayoutAnswer(withDescription(description), items);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && "description" in result).toBe(false);
+    expect(result.ok && result.poses).toHaveLength(3);
+  });
+
+  it("does not make an answer that has everything else wrong any better", () => {
+    expect(parseLayoutAnswer(JSON.stringify({ description: "Fine.", pieces: [] }), items).ok).toBe(false);
   });
 });

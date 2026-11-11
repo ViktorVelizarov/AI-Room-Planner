@@ -1,6 +1,8 @@
 import { formatMetres } from "../shared/room";
 import { floorCoverage } from "../shared/layout";
+import { MIN_MOVE_M, STYLE_NAMES, type LayoutStyle, type MadeLayout } from "../shared/layout-styles";
 import type { RoomDescription } from "../shared/room-description";
+import type { LayoutOptions } from "./types";
 
 // The wording of the research notes (docs/overlap-avoidance.md, "For US-19"), with the rotation
 // rule of src/shared/footprint.ts, and how a designer would arrange the 15 types of furniture. The
@@ -27,6 +29,42 @@ const ARRANGING = `HOW TO ARRANGE THEM
 
 const FRONTS = `The front of a piece is the side that people use it from: the side you sit down from on a sofa, an armchair or a chair, and the way the person sitting faces; the screen side of a TV stand; the side with the drawers or doors on a nightstand, a dresser or a desk; the open side of a bookshelf; the foot of a bed (its headboard is at the back). A table, a rug or a lamp has no front: keep it parallel to the walls.`;
 
+/**
+ * What each style asks for (US-21). The three are different ideas of the same room, so that the
+ * layouts are clearly different from each other: open and along the walls, grouped and close, or a
+ * work zone apart from a rest zone. They are written for a list of any furniture: a list may have no desk.
+ */
+const STYLE_BRIEFS: Record<LayoutStyle, string> = {
+  spacious: `The room should feel open and airy. Put the pieces against the walls and in the corners, and keep the middle of the room free. Leave generous gaps: at least 90 cm for every path, and well over the minimum of 10 cm between pieces that stand near each other. Do not group the pieces in the middle of the room. A rug, if there is one, lies in the open part of the floor, with the seats at its edges.`,
+  cosy: `The room should feel snug and sociable. Group the pieces close together, in one or two groups, each around a focal point such as the TV stand or a rug: the seats face each other or the focal point, a table is within arm's reach of the seats, and a lamp stands beside a seat. Keep the gaps inside a group small, 10 to 30 cm, and let a group stand away from the walls where the room allows it. The rest of the floor stays emptier.`,
+  work: `The room should work well for working. Give the desk the best place, with the office chair at it, and put the bookshelf, dresser or other storage within reach of it. If the list has no desk, make the dining table, or else the biggest table, the work place, with a chair at it. Keep the work area apart from the other pieces: put the seats and the TV stand, if there are any, in another part of the room, so that the room has a work zone and a rest zone. Keep a clear path to the work place, and do not put a sofa or a TV in front of it.`,
+};
+
+const MOVE_CM = Math.round(MIN_MOVE_M * 100);
+
+/** The rule that makes the layouts of a room differ, which the check in code (`isDifferentEnough`) holds the answer to. */
+const DIFFER = `At least half of your pieces must stand in a clearly different place: at least ${MOVE_CM} cm from where the same piece stands in each of the other layouts. Turning a piece where it stands, or moving it a little, does not count, and the big pieces must not all keep the same places.`;
+
+/** A place in metres with two decimals, and never "-0.00": a number that rounds to minus zero is written "0.00" by `toFixed`. */
+const metres = (value: number) => (Math.round(value * 100) / 100).toFixed(2);
+
+/** The style of the layout, and what it has to differ from: the layouts made at the same time (not seen), or made already (seen). */
+function styleSection(style: LayoutStyle, alongside: readonly LayoutStyle[], avoid: readonly MadeLayout[]): string[] {
+  const sections = [
+    `THE STYLE OF THIS LAYOUT: ${STYLE_NAMES[style].toUpperCase()}\n${STYLE_BRIEFS[style]}\nLet the style show clearly, so that anyone who looks at the layout sees its idea at once. The rules above still come first.`,
+  ];
+  if (avoid.length > 0) {
+    const made = avoid
+      .map(({ style: other, poses }) => `The ${STYLE_NAMES[other]} layout puts the pieces here (piece number: x, z):\n${poses.map((pose, index) => `${index}: ${metres(pose.x_m)}, ${metres(pose.z_m)}`).join("; ")}`)
+      .join("\n");
+    sections.push(`LAYOUTS OF THIS ROOM THAT ARE ALREADY MADE\n${made}\n${DIFFER}`);
+  } else if (alongside.length > 0) {
+    const names = alongside.map((other) => STYLE_NAMES[other]).join(" and ");
+    sections.push(`OTHER LAYOUTS\nThe same furniture is being arranged in this room in the ${names} ${alongside.length === 1 ? "style" : "styles"} at the same time, by someone else, so you cannot see ${alongside.length === 1 ? "that layout" : "those layouts"}. Yours must be clearly different from ${alongside.length === 1 ? "it" : "them"}.\n${DIFFER}`);
+  }
+  return sections;
+}
+
 /** The part of the prompt that says what is wrong with the answer that came before, when there was one. */
 const retryNote = (reason: string) =>
   `YOUR PREVIOUS ANSWER COULD NOT BE USED: ${reason}\nAnswer again, from the start. Check the rules and the format before you answer.`;
@@ -34,10 +72,17 @@ const retryNote = (reason: string) =>
 /**
  * The instructions for the model: the room, the list of furniture, what to answer, the rules and
  * how to arrange it. After an answer that could not be used, `feedback` says why, so that the second
- * try can do better than the first. It leaves out colours and materials on purpose: they say nothing
- * about where a piece goes, and free text from the user does not belong in a prompt.
+ * try can do better than the first. With a `style` the layout is asked for in that style, with a
+ * description of its idea in the answer, and with what it has to differ from: the styles that are
+ * made `alongside` it, which it cannot see, or the layouts that are already made (`avoid`), which it
+ * is shown. It leaves out colours and materials on purpose: they say nothing about where a piece goes,
+ * and free text from the user does not belong in a prompt.
  */
-export function buildLayoutPrompt({ room, furniture }: Pick<RoomDescription, "room" | "furniture">, feedback?: string): string {
+export function buildLayoutPrompt(
+  { room, furniture }: Pick<RoomDescription, "room" | "furniture">,
+  feedback?: string,
+  { style, alongside = [], avoid = [] }: LayoutOptions = {},
+): string {
   const width = formatMetres(room.width_m);
   const length = formatMetres(room.length_m);
   const [halfWidth, halfLength] = [formatMetres(room.width_m / 2), formatMetres(room.length_m / 2)];
@@ -69,8 +114,9 @@ ${FRONTS}
 ${example}`,
     RULES,
     ARRANGING,
+    ...(style ? styleSection(style, alongside, avoid) : []),
     `THE ANSWER
-Answer with JSON only: an object with a "pieces" list of exactly ${count} ${count === 1 ? "entry, for piece 0" : `entries, one for each number from 0 to ${count - 1}`}. Each entry has "index" (the number of the piece), "label" (its type), "x_m", "z_m" and "rotation_deg". Give positions to 2 decimals.`,
+Answer with JSON only: an object ${style ? `with a "description" (one or two plain sentences that say the idea of this layout, for the person whose room it is: no piece numbers and no coordinates) and ` : "with "}a "pieces" list of exactly ${count} ${count === 1 ? "entry, for piece 0" : `entries, one for each number from 0 to ${count - 1}`}. Each entry has "index" (the number of the piece), "label" (its type), "x_m", "z_m" and "rotation_deg". Give positions to 2 decimals.`,
   ];
   if (feedback) sections.push(retryNote(feedback));
   return sections.join("\n\n");

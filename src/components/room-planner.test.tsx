@@ -6,6 +6,8 @@ import type { DetectOutcome } from "../client/detect-client";
 import { requestDetection } from "../client/detect-client";
 import type { LayoutOutcome } from "../client/layout-client";
 import { requestLayout } from "../client/layout-client";
+import type { StyledLayout, StyleFailure } from "../shared/api";
+import { LAYOUT_STYLES, STYLE_NAMES, type LayoutStyle } from "../shared/layout-styles";
 import { createRoomViewer, type FurnitureReport, type RoomViewer } from "../viewer";
 import { RoomPlanner } from "./room-planner";
 
@@ -613,32 +615,61 @@ describe("RoomPlanner: the 3D room", () => {
   });
 });
 
-describe("RoomPlanner: the layout", () => {
+describe("RoomPlanner: the layouts (US-21)", () => {
   const inThe3dRoom = (step: (name: string) => HTMLElement | null) => within(step("3D room")!);
-  const generateButton = () => screen.getByRole("button", { name: "Generate layout" });
-  const layoutFor = (count: number): LayoutOutcome => ({
-    ok: true,
-    data: {
-      layout: Array.from({ length: count }, (_, index) => ({ x_m: index, z_m: 0, rotation_deg: 0 })),
-      adjusted: [],
-      calls: { used: 1, limit: 10 },
-    },
-  });
+  const generateButton = () => screen.getByRole("button", { name: "Generate layouts" });
+  const sofaDescription = {
+    room: { width_m: 4, length_m: 5, height_m: 2.5 },
+    furniture: [{ label: "sofa", width_cm: 200, depth_cm: 90, height_cm: 85, color: "grey", material: "fabric" }],
+  };
 
-  it("is asked for in the 3D room, for the room description that the user confirmed (AC1)", async () => {
+  /** Where a style puts the pieces: each style has its own places and turn, so that a layout can be told from the others and from the rows. */
+  const placeFor = (style: LayoutStyle, index: number) =>
+    ({
+      spacious: { x_m: 1.5 - index, z_m: -1, rotation_deg: 90 },
+      cosy: { x_m: -1.5 + index, z_m: 1, rotation_deg: 180 },
+      work: { x_m: 0.5, z_m: -1.5 + index, rotation_deg: 270 },
+    })[style];
+  const styledFor = (style: LayoutStyle, count: number, overrides: Partial<StyledLayout> = {}): StyledLayout => ({
+    style,
+    ok: true,
+    name: STYLE_NAMES[style],
+    description: `The idea of the ${STYLE_NAMES[style]} layout.`,
+    poses: Array.from({ length: count }, (_, index) => placeFor(style, index)),
+    adjusted: [],
+    ...overrides,
+  });
+  const failedStyle = (style: LayoutStyle): StyleFailure => ({
+    style,
+    ok: false,
+    name: STYLE_NAMES[style],
+    code: "invalid_answer",
+    message: `The AI could not make a usable ${STYLE_NAMES[style]} layout this time.`,
+  });
+  const layoutsFor = (count: number, failing: LayoutStyle[] = [], calls = { used: 3, limit: 10 }): LayoutOutcome => ({
+    ok: true,
+    data: { results: LAYOUT_STYLES.map((style) => (failing.includes(style) ? failedStyle(style) : styledFor(style, count))), calls },
+  });
+  const oneStyle = (style: LayoutStyle, count: number, calls = { used: 4, limit: 10 }): LayoutOutcome => ({ ok: true, data: { results: [styledFor(style, count)], calls } });
+
+  const card = (style: LayoutStyle) => within(screen.getByRole("heading", { name: STYLE_NAMES[style], level: 5 }).closest("li")!);
+  const show = (user: ReturnType<typeof userEvent.setup>, style: LayoutStyle) => user.click(card(style).getByRole("button", { name: "Show in the 3D room" }));
+  const pressed = (style: LayoutStyle) => card(style).getByRole("button", { name: "Show in the 3D room" }).getAttribute("aria-pressed");
+  const showings = (viewer: FakeViewer) => viewer.showFurniture.mock.calls.map(([pieces]) => pieces as { item: { label: string; color: string }; placement: unknown }[]);
+  const lastPlaces = (viewer: FakeViewer) => showings(viewer).slice(-1)[0].map((piece) => piece.placement);
+
+  it("is asked for in the 3D room, for the room description that the user confirmed, in all three styles (AC1)", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step } = await setupToSummary();
     await open3dRoom(user);
 
     await user.click(generateButton());
 
     expect(layoutRequest).toHaveBeenCalledTimes(1);
-    expect(layoutRequest).toHaveBeenCalledWith({
-      room: { width_m: 4, length_m: 5, height_m: 2.5 },
-      furniture: [{ label: "sofa", width_cm: 200, depth_cm: 90, height_cm: 85, color: "grey", material: "fabric" }],
-    });
-    expect(await inThe3dRoom(step).findByRole("table")).toBeTruthy();
+    expect(layoutRequest).toHaveBeenCalledWith(sofaDescription, { styles: undefined, existing: [] });
+    expect(await inThe3dRoom(step).findByRole("heading", { name: "Suggested layouts", level: 4 })).toBeTruthy();
+    expect(inThe3dRoom(step).getAllByRole("heading", { level: 5 }).map((heading) => heading.textContent)).toEqual(["Spacious", "Cosy", "Work-focused"]);
   });
 
   it("is not in the other steps", async () => {
@@ -646,54 +677,89 @@ describe("RoomPlanner: the layout", () => {
     const { step } = await setupToSummary();
 
     expect(step("Your room")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Generate layout" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Generate layouts" })).toBeNull();
   });
 
-  describe("shown in the 3D room (US-20)", () => {
-    /** A layout that is not what the rows would be: every piece turned a quarter, in a place of its own. */
-    const turnedLayout = (count: number, calls = { used: 1, limit: 10 }): LayoutOutcome => ({
-      ok: true,
-      data: {
-        layout: Array.from({ length: count }, (_, index) => ({ x_m: 1.5 - index, z_m: -1, rotation_deg: 90 })),
-        adjusted: [],
-        calls,
-      },
-    });
-    const showings = (viewer: FakeViewer) => viewer.showFurniture.mock.calls.map(([pieces]) => pieces as { item: { label: string; color: string }; placement: unknown }[]);
-
-    it("puts every piece where the layout says and turns it as the layout says, in the 3D room that is open, as soon as the layout is made (AC1)", async () => {
+  describe("shown in the 3D room", () => {
+    it("puts the first layout in the 3D room that is open, as soon as the three are made: every piece where it says and turned as it says (AC1)", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValue(turnedLayout(1));
+      layoutRequest.mockResolvedValue(layoutsFor(1));
       const { user, step } = await setupToSummary();
       await open3dRoom(user);
-      // Until there is a layout the furniture stands in a row, facing the front.
+      // Until there are layouts the furniture stands in a row, facing the front.
       expect(showings(viewers[0])).toHaveLength(1);
       expect(showings(viewers[0])[0][0].placement).not.toHaveProperty("rotation_deg");
 
       await user.click(generateButton());
-      await inThe3dRoom(step).findByRole("table");
+      await inThe3dRoom(step).findByRole("list");
 
       await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(2));
       expect(viewers).toHaveLength(1);
       expect(viewers[0].dispose).not.toHaveBeenCalled();
-      const [pieces] = showings(viewers[0]).slice(-1);
-      expect(pieces.map((piece) => [piece.item.label, piece.placement])).toEqual([["sofa", { x_m: 1.5, z_m: -1, rotation_deg: 90 }]]);
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 1.5, z_m: -1, rotation_deg: 90 }]);
+      expect(pressed("spacious")).toBe("true");
+      expect(pressed("cosy")).toBe("false");
+      expect(pressed("work")).toBe("false");
     });
 
-    it("says in the 3D room, and in its label, that the furniture is in the suggested layout, and says that it is in a row before", async () => {
+    it("says in the 3D room, and in its label, which layout the furniture is in, and says that it is in a row before", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValue(turnedLayout(1));
+      layoutRequest.mockResolvedValue(layoutsFor(1));
       const { user, step } = await setupToSummary();
       await open3dRoom(user);
       expect(inThe3dRoom(step).getByText(/with your furniture lined up along the back wall in the order of your list\./)).toBeTruthy();
-      expect(screen.queryByRole("group", { name: /in the suggested layout$/ })).toBeNull();
+      expect(screen.queryByRole("group", { name: /layout$/ })).toBeNull();
 
       await user.click(generateButton());
 
-      expect(await inThe3dRoom(step).findByText(/with your furniture arranged as in the suggested layout below\. Each piece takes the colour and material/)).toBeTruthy();
+      expect(await inThe3dRoom(step).findByText(/with your furniture arranged as in the Spacious layout below\. Each piece takes the colour and material/)).toBeTruthy();
       expect(inThe3dRoom(step).queryByText(/lined up along the back wall/)).toBeNull();
-      expect(screen.getByRole("group", { name: "3D view of the room: 4 m wide, 5 m long, 2.5 m high, with 1 piece of furniture in the suggested layout" })).toBeTruthy();
-      expect(inThe3dRoom(step).getByText(/The 3D room above shows this layout/)).toBeTruthy();
+      expect(screen.getByRole("group", { name: "3D view of the room: 4 m wide, 5 m long, 2.5 m high, with 1 piece of furniture in the Spacious layout" })).toBeTruthy();
+    });
+
+    it("shows another layout in the same 3D room when the user chooses it, without asking the AI again and without making a new view", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue(layoutsFor(1));
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await inThe3dRoom(step).findByRole("list");
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(2));
+
+      await show(user, "cosy");
+
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(3));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: -1.5, z_m: 1, rotation_deg: 180 }]);
+      expect(pressed("cosy")).toBe("true");
+      expect(pressed("spacious")).toBe("false");
+      expect(screen.getByRole("group", { name: /with 1 piece of furniture in the Cosy layout$/ })).toBeTruthy();
+      expect(inThe3dRoom(step).getByText(/arranged as in the Cosy layout below/)).toBeTruthy();
+      expect(viewers).toHaveLength(1);
+      expect(viewers[0].dispose).not.toHaveBeenCalled();
+      expect(layoutRequest).toHaveBeenCalledTimes(1);
+
+      await show(user, "work");
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(4));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 0.5, z_m: -1.5, rotation_deg: 270 }]);
+
+      await show(user, "spacious");
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(5));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 1.5, z_m: -1, rotation_deg: 90 }]);
+    });
+
+    it("shows the first style that worked when the first one did not", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue(layoutsFor(1, ["spacious"]));
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+
+      await user.click(generateButton());
+      await inThe3dRoom(step).findByRole("list");
+
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(2));
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: -1.5, z_m: 1, rotation_deg: 180 }]);
+      expect(pressed("cosy")).toBe("true");
+      expect(inThe3dRoom(step).getByText(/arranged as in the Cosy layout below/)).toBeTruthy();
     });
 
     it("does not change the 3D room when no layout can be made, and the furniture stays in its row", async () => {
@@ -709,45 +775,81 @@ describe("RoomPlanner: the layout", () => {
 
       await inThe3dRoom(step).findByRole("alert");
       expect(viewers[0].showFurniture).toHaveBeenCalledTimes(1);
-      expect(screen.queryByRole("group", { name: /in the suggested layout$/ })).toBeNull();
+      expect(screen.queryByRole("group", { name: /layout$/ })).toBeNull();
       expect(inThe3dRoom(step).getByText(/lined up along the back wall/)).toBeTruthy();
     });
 
-    it("shows a new layout in place of the one before", async () => {
+    it("shows the first layout of a new set of three, and not the one that was chosen before", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValueOnce(turnedLayout(1)).mockResolvedValueOnce({
-        ok: true,
-        data: { layout: [{ x_m: -1, z_m: 1.5, rotation_deg: 180 }], adjusted: [], calls: { used: 2, limit: 10 } },
-      });
+      layoutRequest.mockResolvedValueOnce(layoutsFor(1)).mockResolvedValueOnce(layoutsFor(1, [], { used: 6, limit: 10 }));
       const { user, step } = await setupToSummary();
       await open3dRoom(user);
       await user.click(generateButton());
-      await inThe3dRoom(step).findByRole("table");
+      await inThe3dRoom(step).findByRole("list");
+      await show(user, "work");
+      await waitFor(() => expect(pressed("work")).toBe("true"));
 
       await user.click(generateButton());
 
-      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(3));
-      expect(showings(viewers[0]).slice(-1)[0][0].placement).toEqual({ x_m: -1, z_m: 1.5, rotation_deg: 180 });
-      expect(viewers).toHaveLength(1);
+      await waitFor(() => expect(pressed("spacious")).toBe("true"));
+      expect(pressed("work")).toBe("false");
+      expect(lastPlaces(viewers[0])).toEqual([{ x_m: 1.5, z_m: -1, rotation_deg: 90 }]);
     });
 
-    it("shows the layout the moment the 3D room is opened again, and never the furniture in a row first (AC1)", async () => {
+    it("replaces all the layouts when a new set comes, so that a style that the new set has no answer for is not left over from the old", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValue(turnedLayout(1));
+      const twoOnly: LayoutOutcome = { ok: true, data: { results: [styledFor("spacious", 1), failedStyle("cosy")], calls: { used: 6, limit: 10 } } };
+      layoutRequest.mockResolvedValueOnce(layoutsFor(1)).mockResolvedValueOnce(twoOnly);
       const { user, step } = await setupToSummary();
       await open3dRoom(user);
       await user.click(generateButton());
-      await inThe3dRoom(step).findByRole("table");
+      await inThe3dRoom(step).findByRole("list");
+      expect(screen.getByRole("heading", { name: "Work-focused", level: 5 })).toBeTruthy();
+
+      await user.click(generateButton());
+
+      await waitFor(() => expect(screen.queryByRole("heading", { name: "Work-focused", level: 5 })).toBeNull());
+      expect(inThe3dRoom(step).getAllByRole("heading", { level: 5 }).map((heading) => heading.textContent)).toEqual(["Spacious", "Cosy"]);
+    });
+
+    it("keeps showing the layout that was there when a new set cannot be made", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValueOnce(layoutsFor(1)).mockResolvedValueOnce({ ok: false, failure: { code: "ai_unavailable", message: "Not now.", retryable: true } });
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await inThe3dRoom(step).findByRole("list");
+      await show(user, "cosy");
+      await waitFor(() => expect(viewers[0].showFurniture).toHaveBeenCalledTimes(3));
+
+      await user.click(generateButton());
+
+      await inThe3dRoom(step).findAllByRole("alert");
+      expect(viewers[0].showFurniture).toHaveBeenCalledTimes(3);
+      expect(pressed("cosy")).toBe("true");
+      expect(screen.getByRole("group", { name: /in the Cosy layout$/ })).toBeTruthy();
+    });
+
+    it("shows the layout that was chosen the moment the 3D room is opened again, and never the furniture in a row first (AC1)", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue(layoutsFor(1));
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await inThe3dRoom(step).findByRole("list");
+      await show(user, "work");
+      await waitFor(() => expect(pressed("work")).toBe("true"));
       await user.click(screen.getByRole("button", { name: "Back to your room" }));
 
       await open3dRoom(user);
 
       expect(viewers).toHaveLength(2);
       expect(showings(viewers[1])).toHaveLength(1);
-      expect(showings(viewers[1])[0][0].placement).toEqual({ x_m: 1.5, z_m: -1, rotation_deg: 90 });
+      expect(showings(viewers[1])[0][0].placement).toEqual({ x_m: 0.5, z_m: -1.5, rotation_deg: 270 });
+      expect(pressed("work")).toBe("true");
     });
 
-    it("shows a layout that was still being made when the user went back, as soon as the user comes to the 3D room again", async () => {
+    it("shows layouts that were still being made when the user went back, as soon as the user comes to the 3D room again", async () => {
       detect.mockResolvedValue(success);
       let finish!: (outcome: LayoutOutcome) => void;
       layoutRequest.mockReturnValue(new Promise<LayoutOutcome>((resolve) => (finish = resolve)));
@@ -755,7 +857,7 @@ describe("RoomPlanner: the layout", () => {
       await open3dRoom(user);
       await user.click(generateButton());
       await user.click(screen.getByRole("button", { name: "Back to your room" }));
-      await act(async () => finish(turnedLayout(1)));
+      await act(async () => finish(layoutsFor(1)));
 
       await open3dRoom(user);
 
@@ -763,13 +865,15 @@ describe("RoomPlanner: the layout", () => {
       expect(showings(viewers[1])[0][0].placement).toEqual({ x_m: 1.5, z_m: -1, rotation_deg: 90 });
     });
 
-    it("keeps the layout in the room when only the colour of a piece has changed, with the new colour on the piece", async () => {
+    it("keeps the layouts, and the one that is shown, when only the colour of a piece has changed, with the new colour on the piece", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValue(turnedLayout(1));
+      layoutRequest.mockResolvedValue(layoutsFor(1));
       const { user, step, enter } = await setupToSummary();
       await open3dRoom(user);
       await user.click(generateButton());
-      await inThe3dRoom(step).findByRole("table");
+      await inThe3dRoom(step).findByRole("list");
+      await show(user, "cosy");
+      await waitFor(() => expect(pressed("cosy")).toBe("true"));
       await user.click(screen.getByRole("button", { name: "Back to your room" }));
       await user.click(within(step("Your room")!).getByRole("button", { name: /^Edit Sofa/ }));
       await enter("Colour", "dark green");
@@ -779,16 +883,18 @@ describe("RoomPlanner: the layout", () => {
 
       const [first] = showings(viewers[1]);
       expect(first[0].item.color).toBe("dark green");
-      expect(first[0].placement).toEqual({ x_m: 1.5, z_m: -1, rotation_deg: 90 });
+      expect(first[0].placement).toEqual({ x_m: -1.5, z_m: 1, rotation_deg: 180 });
+      expect(pressed("cosy")).toBe("true");
+      expect(layoutRequest).toHaveBeenCalledTimes(1);
     });
 
-    it("does not show a layout for other furniture: when the list changes the furniture stands in a row again, until a layout is made for it", async () => {
+    it("does not show layouts for other furniture: when the list changes the furniture stands in a row again, until layouts are made for it", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValue(turnedLayout(1));
+      layoutRequest.mockResolvedValue(layoutsFor(1));
       const { user, step } = await setupToSummary();
       await open3dRoom(user);
       await user.click(generateButton());
-      await inThe3dRoom(step).findByRole("table");
+      await inThe3dRoom(step).findByRole("list");
       await user.click(screen.getByRole("button", { name: "Back to your room" }));
       await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "rug");
       await user.click(screen.getByRole("button", { name: "Add furniture" }));
@@ -798,11 +904,12 @@ describe("RoomPlanner: the layout", () => {
       expect(showings(viewers[1])).toHaveLength(1);
       expect(showings(viewers[1])[0]).toHaveLength(2);
       for (const piece of showings(viewers[1])[0]) expect(piece.placement).not.toHaveProperty("rotation_deg");
-      expect(screen.queryByRole("group", { name: /in the suggested layout$/ })).toBeNull();
+      expect(screen.queryByRole("group", { name: /layout$/ })).toBeNull();
       expect(inThe3dRoom(step).getByText(/lined up along the back wall/)).toBeTruthy();
+      expect(inThe3dRoom(step).queryByRole("list")).toBeNull();
     });
 
-    it("does not show a layout that comes in late for furniture that has changed since it was asked for", async () => {
+    it("does not show layouts that come in late for furniture that has changed since they were asked for", async () => {
       detect.mockResolvedValue(success);
       let finish!: (outcome: LayoutOutcome) => void;
       layoutRequest.mockReturnValue(new Promise<LayoutOutcome>((resolve) => (finish = resolve)));
@@ -815,10 +922,10 @@ describe("RoomPlanner: the layout", () => {
       await open3dRoom(user);
 
       // The answer is for a list of one piece, and the list now has two.
-      await act(async () => finish(turnedLayout(1)));
+      await act(async () => finish(layoutsFor(1)));
 
+      expect(inThe3dRoom(step).queryByRole("list")).toBeNull();
       expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
-      expect(inThe3dRoom(step).queryByText(/The 3D room above shows this layout/)).toBeNull();
       expect(viewers[1].showFurniture).toHaveBeenCalledTimes(1);
       expect(showings(viewers[1])[0]).toHaveLength(2);
       for (const piece of showings(viewers[1])[0]) expect(piece.placement).not.toHaveProperty("rotation_deg");
@@ -826,9 +933,9 @@ describe("RoomPlanner: the layout", () => {
       expect(generateButton().hasAttribute("disabled")).toBe(false);
     });
 
-    it("still lists the layout when the browser cannot show 3D, and does not fail", async () => {
+    it("still lists the layouts when the browser cannot show 3D, and does not fail", async () => {
       detect.mockResolvedValue(success);
-      layoutRequest.mockResolvedValue(turnedLayout(1));
+      layoutRequest.mockResolvedValue(layoutsFor(1));
       createViewer.mockImplementation(() => {
         throw new Error("Error creating WebGL context.");
       });
@@ -838,47 +945,125 @@ describe("RoomPlanner: the layout", () => {
 
       await user.click(generateButton());
 
-      expect(await inThe3dRoom(step).findByRole("table")).toBeTruthy();
+      expect(await inThe3dRoom(step).findByRole("list")).toBeTruthy();
+      expect(inThe3dRoom(step).getAllByRole("table")).toHaveLength(3);
       expect(inThe3dRoom(step).getByText(/The 3D view could not start/)).toBeTruthy();
     });
   });
 
-  it("leaves the 3D room as it is when no layout can be made, and says why (AC3)", async () => {
+  describe("a style that fails while the others work (AC4)", () => {
+    it("shows the other two, a message for the failed one, and shows the first that worked in the 3D room", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValue(layoutsFor(1, ["cosy"], { used: 4, limit: 10 }));
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+
+      await user.click(generateButton());
+
+      expect(await card("cosy").findByText("The AI could not make a usable Cosy layout this time.")).toBeTruthy();
+      expect(card("cosy").getByRole("button", { name: "Try again" })).toBeTruthy();
+      expect(card("spacious").getByRole("table")).toBeTruthy();
+      expect(card("work").getByRole("table")).toBeTruthy();
+      expect(pressed("spacious")).toBe("true");
+      expect(inThe3dRoom(step).getByText("AI calls used this session: 4 of 10")).toBeTruthy();
+    });
+
+    it("makes only that style again, told the layouts that worked, and puts the new layout in its card without changing what the 3D room shows", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValueOnce(layoutsFor(1, ["cosy"], { used: 4, limit: 10 })).mockResolvedValueOnce(oneStyle("cosy", 1, { used: 5, limit: 10 }));
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await card("cosy").findByRole("button", { name: "Try again" });
+      await show(user, "work");
+      await waitFor(() => expect(pressed("work")).toBe("true"));
+      const showingsBefore = viewers[0].showFurniture.mock.calls.length;
+
+      await user.click(card("cosy").getByRole("button", { name: "Try again" }));
+
+      expect(await card("cosy").findByRole("table")).toBeTruthy();
+      expect(layoutRequest).toHaveBeenLastCalledWith(sofaDescription, {
+        styles: ["cosy"],
+        existing: [
+          { style: "spacious", poses: [placeFor("spacious", 0)] },
+          { style: "work", poses: [placeFor("work", 0)] },
+        ],
+      });
+      // The 3D room still shows the layout that the user chose, and was not drawn again.
+      expect(pressed("work")).toBe("true");
+      expect(pressed("cosy")).toBe("false");
+      expect(viewers[0].showFurniture).toHaveBeenCalledTimes(showingsBefore);
+      expect(inThe3dRoom(step).getByText("AI calls used this session: 5 of 10")).toBeTruthy();
+      expect(inThe3dRoom(step).queryByText("The AI could not make a usable Cosy layout this time.")).toBeNull();
+    });
+
+    it("can then show the layout that was made again", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest.mockResolvedValueOnce(layoutsFor(1, ["cosy"])).mockResolvedValueOnce(oneStyle("cosy", 1));
+      const { user } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await user.click(await card("cosy").findByRole("button", { name: "Try again" }));
+      await card("cosy").findByRole("table");
+
+      await show(user, "cosy");
+
+      await waitFor(() => expect(lastPlaces(viewers[0])).toEqual([{ x_m: -1.5, z_m: 1, rotation_deg: 180 }]));
+    });
+
+    it("keeps the message, and keeps the other layouts, when making the style again fails too", async () => {
+      detect.mockResolvedValue(success);
+      layoutRequest
+        .mockResolvedValueOnce(layoutsFor(1, ["cosy"]))
+        .mockResolvedValueOnce({ ok: false, failure: { code: "ai_unavailable", message: "The AI service is not available right now. Please try again in a moment.", retryable: true, calls: { used: 5, limit: 10 } } });
+      const { user, step } = await setupToSummary();
+      await open3dRoom(user);
+      await user.click(generateButton());
+      await user.click(await card("cosy").findByRole("button", { name: "Try again" }));
+
+      expect(await inThe3dRoom(step).findByText("The AI service is not available right now. Please try again in a moment.")).toBeTruthy();
+      expect(card("cosy").getByText("The AI could not make a usable Cosy layout this time.")).toBeTruthy();
+      expect(card("spacious").getByRole("table")).toBeTruthy();
+      expect(pressed("spacious")).toBe("true");
+    });
+  });
+
+  it("leaves the 3D room as it is when no layout can be made, and says why (AC3 of US-19)", async () => {
     detect.mockResolvedValue(success);
     layoutRequest.mockResolvedValue({
       ok: false,
-      failure: { code: "invalid_answer", message: "The AI could not make a usable layout this time. Please try again.", retryable: true, calls: { used: 2, limit: 10 } },
+      failure: { code: "invalid_answer", message: "The AI could not make a usable layout this time. Please try again.", retryable: true, calls: { used: 6, limit: 10 } },
     });
     const { user, step } = await setupToSummary();
     await open3dRoom(user);
-    const showings = viewers[0].showFurniture.mock.calls.length;
+    const showingCount = viewers[0].showFurniture.mock.calls.length;
 
     await user.click(generateButton());
 
     expect((await inThe3dRoom(step).findByRole("alert")).textContent).toContain("The AI could not make a usable layout this time.");
     expect(viewers).toHaveLength(1);
     expect(viewers[0].dispose).not.toHaveBeenCalled();
-    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(showings);
+    expect(viewers[0].showFurniture).toHaveBeenCalledTimes(showingCount);
     expect(screen.getByRole("group", { name: /^3D view of the room/ })).toBeTruthy();
   });
 
-  it("keeps the layout when the user goes back to the room and continues again without changing anything", async () => {
+  it("keeps the layouts when the user goes back to the room and continues again without changing anything", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step } = await setupToSummary();
     await open3dRoom(user);
     await user.click(generateButton());
-    await inThe3dRoom(step).findByRole("table");
+    await inThe3dRoom(step).findByRole("list");
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     expect(screen.queryByRole("table")).toBeNull(); // the 3D room is hidden
     await open3dRoom(user);
 
-    expect(inThe3dRoom(step).getByRole("table")).toBeTruthy();
+    expect(inThe3dRoom(step).getAllByRole("table")).toHaveLength(3);
     expect(layoutRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("does not lose a layout that is still being made when the user goes back, and shows it when they return", async () => {
+  it("does not lose layouts that are still being made when the user goes back, and shows them when they return", async () => {
     detect.mockResolvedValue(success);
     let finish!: (outcome: LayoutOutcome) => void;
     layoutRequest.mockReturnValue(new Promise<LayoutOutcome>((resolve) => (finish = resolve)));
@@ -887,20 +1072,20 @@ describe("RoomPlanner: the layout", () => {
     await user.click(generateButton());
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
-    finish(layoutFor(1));
+    finish(layoutsFor(1));
     await open3dRoom(user);
 
-    expect(await inThe3dRoom(step).findByRole("table")).toBeTruthy();
+    expect(await inThe3dRoom(step).findByRole("list")).toBeTruthy();
     expect(layoutRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("forgets the layout when the furniture has changed, as it is a layout of other furniture", async () => {
+  it("forgets the layouts when the furniture has changed, as they are layouts of other furniture", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step } = await setupToSummary();
     await open3dRoom(user);
     await user.click(generateButton());
-    await inThe3dRoom(step).findByRole("table");
+    await inThe3dRoom(step).findByRole("list");
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     await user.selectOptions(screen.getByLabelText("Add a piece the AI missed"), "rug");
@@ -908,19 +1093,19 @@ describe("RoomPlanner: the layout", () => {
     await open3dRoom(user);
 
     expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
-    layoutRequest.mockResolvedValue(layoutFor(2));
+    layoutRequest.mockResolvedValue(layoutsFor(2));
     await user.click(generateButton());
-    expect(layoutRequest).toHaveBeenLastCalledWith(expect.objectContaining({ furniture: expect.arrayContaining([expect.objectContaining({ label: "rug" })]) }));
-    expect(await inThe3dRoom(step).findAllByRole("row")).toHaveLength(3);
+    expect(layoutRequest).toHaveBeenLastCalledWith(expect.objectContaining({ furniture: expect.arrayContaining([expect.objectContaining({ label: "rug" })]) }), { styles: undefined, existing: [] });
+    expect(await inThe3dRoom(step).findAllByRole("row")).toHaveLength(3 * 3);
   });
 
-  it("keeps the layout when only the colour, the material or the height of a piece has changed, which a layout does not depend on", async () => {
+  it("keeps the layouts when only the colour, the material or the height of a piece has changed, which a layout does not depend on", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step, enter } = await setupToSummary();
     await open3dRoom(user);
     await user.click(generateButton());
-    await inThe3dRoom(step).findByRole("table");
+    await inThe3dRoom(step).findByRole("list");
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     await user.click(within(step("Your room")!).getByRole("button", { name: /^Edit Sofa/ }));
@@ -930,17 +1115,17 @@ describe("RoomPlanner: the layout", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await open3dRoom(user);
 
-    expect(inThe3dRoom(step).getByRole("table")).toBeTruthy();
+    expect(inThe3dRoom(step).getAllByRole("table")).toHaveLength(3);
     expect(layoutRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("forgets the layout when the size of a piece has changed", async () => {
+  it("forgets the layouts when the size of a piece has changed", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step, enter } = await setupToSummary();
     await open3dRoom(user);
     await user.click(generateButton());
-    await inThe3dRoom(step).findByRole("table");
+    await inThe3dRoom(step).findByRole("list");
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     await user.click(within(step("Your room")!).getByRole("button", { name: /^Edit Sofa/ }));
@@ -949,15 +1134,16 @@ describe("RoomPlanner: the layout", () => {
     await open3dRoom(user);
 
     expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
+    expect(inThe3dRoom(step).queryByRole("list")).toBeNull();
   });
 
-  it("keeps the layout when only the height of the room has changed", async () => {
+  it("keeps the layouts when only the height of the room has changed", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step, enter } = await setupToSummary();
     await open3dRoom(user);
     await user.click(generateButton());
-    await inThe3dRoom(step).findByRole("table");
+    await inThe3dRoom(step).findByRole("list");
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     await user.click(screen.getByRole("button", { name: "Back to room size" }));
@@ -965,17 +1151,17 @@ describe("RoomPlanner: the layout", () => {
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await open3dRoom(user);
 
-    expect(inThe3dRoom(step).getByRole("table")).toBeTruthy();
+    expect(inThe3dRoom(step).getAllByRole("table")).toHaveLength(3);
     expect(layoutRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("forgets the layout when the size of the room has changed", async () => {
+  it("forgets the layouts when the size of the room has changed", async () => {
     detect.mockResolvedValue(success);
-    layoutRequest.mockResolvedValue(layoutFor(1));
+    layoutRequest.mockResolvedValue(layoutsFor(1));
     const { user, step, enter } = await setupToSummary();
     await open3dRoom(user);
     await user.click(generateButton());
-    await inThe3dRoom(step).findByRole("table");
+    await inThe3dRoom(step).findByRole("list");
 
     await user.click(screen.getByRole("button", { name: "Back to your room" }));
     await user.click(screen.getByRole("button", { name: "Back to room size" }));
@@ -984,5 +1170,6 @@ describe("RoomPlanner: the layout", () => {
     await open3dRoom(user);
 
     expect(inThe3dRoom(step).queryByRole("table")).toBeNull();
+    expect(inThe3dRoom(step).queryByRole("list")).toBeNull();
   });
 });

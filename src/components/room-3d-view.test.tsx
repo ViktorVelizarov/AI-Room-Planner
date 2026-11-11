@@ -268,6 +268,23 @@ describe("Room3DView: a layout (US-20)", () => {
     expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture in the suggested layout");
   });
 
+  it("says the name of the layout in the label of the view when it is given one (US-21), and calls it the suggested layout when it is not", async () => {
+    const { rerender } = await show(<Room3DView description={description} layout={poses} layoutName="Work-focused" />);
+    expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture in the Work-focused layout");
+
+    await act(async () => rerender(<Room3DView description={description} layout={otherPoses} layoutName="Cosy" />));
+    expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture in the Cosy layout");
+
+    await act(async () => rerender(<Room3DView description={description} layout={otherPoses} />));
+    expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture in the suggested layout");
+  });
+
+  it("does not say the name of a layout that is not used, for want of one that fits the list", async () => {
+    await show(<Room3DView description={description} layout={[poses[0]]} layoutName="Cosy" />);
+
+    expect(view().getAttribute("aria-label")).toBe("3D view of the room: 6 m wide, 4.5 m long, 2.5 m high, with 2 pieces of furniture");
+  });
+
   it("still tells which pieces are plain boxes, for the pieces of a layout", async () => {
     answer = async () => ({ count: 2, unmatched: [{ index: 1, type: "coffee_table", reason: "load-failed" }] });
 

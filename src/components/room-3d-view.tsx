@@ -51,7 +51,16 @@ function describeUnmatched(unmatched: UnmatchedPiece[]): string {
  * it is lined up along the back wall. A piece with no 3D model is a plain box, and the user is told
  * which. If the browser cannot show 3D, it says so instead.
  */
-export function Room3DView({ description, layout }: { description: RoomDescription; layout?: readonly Pose[] | null }) {
+export function Room3DView({
+  description,
+  layout,
+  layoutName,
+}: {
+  description: RoomDescription;
+  layout?: readonly Pose[] | null;
+  /** The name of the layout, such as "Cosy", which the label of the view says. */
+  layoutName?: string;
+}) {
   const viewer = useRef<RoomViewer | null>(null);
   const [failed, setFailed] = useState(false);
   // What was shown for one list of furniture. A result for another list is out of date, and then the furniture is loading.
@@ -132,7 +141,7 @@ export function Room3DView({ description, layout }: { description: RoomDescripti
       <div
         ref={mount}
         role="group"
-        aria-label={`3D view of the room: ${width} m wide, ${length} m long, ${height} m high, with ${pieces(furniture.length)} of furniture${poses ? " in the suggested layout" : ""}`}
+        aria-label={`3D view of the room: ${width} m wide, ${length} m long, ${height} m high, with ${pieces(furniture.length)} of furniture${poses ? ` in the ${layoutName ?? "suggested"} layout` : ""}`}
         aria-describedby={hintId}
         tabIndex={0}
         onKeyDown={handleKeyDown}
